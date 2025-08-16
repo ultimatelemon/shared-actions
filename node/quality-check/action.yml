@@ -1,0 +1,34 @@
+name: Quality Check
+description: Run quality checks on the codebase
+
+inputs:
+  lint:
+    description: Run linters
+    required: false
+    default: 'false'
+  unit-test:
+    description: Run unit tests
+    required: false
+    default: 'false'
+  format:
+    description: Run code formatters
+    required: false
+    default: 'false'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Run Linters
+      if: inputs.lint == 'true'
+      run: npm run lint
+      shell: bash
+
+    - name: Run Unit Tests
+      if: inputs.unit-test == 'true'
+      run: npm test
+      shell: bash
+
+    - name: Run Code Formatters
+      if: inputs.format == 'true'
+      run: npm run format
+      shell: bash
