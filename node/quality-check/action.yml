@@ -25,10 +25,10 @@ runs:
 
     - name: Run Unit Tests
       if: inputs.unit-test == 'true'
-      run: npm test
+      run: npm run test
       shell: bash
 
     - name: Run Code Formatters
       if: inputs.format == 'true'
-      run: npm run format
+      run: npm run format:check
       shell: bash
