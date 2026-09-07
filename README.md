@@ -66,8 +66,3 @@ is better off with its own workflow than with another input here.
 Call it on the `v1` tag, never on `@main` — a push to this repository would
 otherwise change CI in every repository at once. Move the `v1` tag forward
 only after the change has run green in one repository.
-
-## `node/quality-check`
-
-Superseded by `node-quality.yml` and unused. It wrapped three `npm run` lines
-without owning checkout and install, which is where the actual time goes.
