@@ -28,6 +28,13 @@ on:
         description: Runner to use.
         type: string
         default: ubuntu-latest
+    secrets:
+      npmrc:
+        description: >-
+          Contents of an .npmrc, for a project that installs from a private
+          registry. Written to the runner's home before install, so it never
+          has to live in the repository.
+        required: false
 
 jobs:
   quality:
@@ -56,6 +63,17 @@ jobs:
           cache-dependency-path: >-
             ${{ inputs.working-directory }}/${{ inputs.package-manager == 'pnpm'
             && 'pnpm-lock.yaml' || 'package-lock.json' }}
+
+      # Written to the home directory rather than the working directory so it
+      # cannot end up in a build context or a diff. The runner is thrown away
+      # after the job.
+      - name: npm auth
+        env:
+          NPMRC: ${{ secrets.npmrc }}
+        run: |
+          [ -n "$NPMRC" ] || exit 0
+          printf '%s\n' "$NPMRC" > "$HOME/.npmrc"
+          chmod 600 "$HOME/.npmrc"
 
       - name: install
         run: >-

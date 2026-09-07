@@ -61,6 +61,23 @@ run reports every problem. The job still fails.
 Keep this list short. A repository that needs something genuinely different
 is better off with its own workflow than with another input here.
 
+### Private registries
+
+A project that installs from a private npm registry passes the `.npmrc` as a
+secret instead of committing it. The registry lines are not secret, so only
+the token comes from a repository secret:
+
+```yaml
+    secrets:
+      npmrc: |
+        @awesome.me:registry=https://npm.fontawesome.com/
+        @fortawesome:registry=https://npm.fontawesome.com/
+        //npm.fontawesome.com/:_authToken=${{ secrets.FONTAWESOME_NPM_AUTH_TOKEN }}
+```
+
+It is written to the runner's home directory, never the working directory, so
+it cannot reach a build context or a diff.
+
 ## `docker-publish.yml`
 
 Builds one image and pushes it to GHCR: buildx, login, tag and label rules and
