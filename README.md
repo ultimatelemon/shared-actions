@@ -61,8 +61,67 @@ run reports every problem. The job still fails.
 Keep this list short. A repository that needs something genuinely different
 is better off with its own workflow than with another input here.
 
-### Versioning
+## `docker-publish.yml`
 
-Call it on the `v1` tag, never on `@main` — a push to this repository would
-otherwise change CI in every repository at once. Move the `v1` tag forward
-only after the change has run green in one repository.
+Builds one image and pushes it to GHCR: buildx, login, tag and label rules and
+a scoped build cache.
+
+```yaml
+jobs:
+  publish:
+    uses: ultimatelemon/shared-actions/.github/workflows/docker-publish.yml@v1
+    permissions:
+      contents: read
+      packages: write
+    with:
+      image: ghcr.io/ultimatelemon/yptuinen
+      build-args: |
+        NEXT_PUBLIC_COC=${{ vars.NEXT_PUBLIC_COC }}
+    secrets:
+      build-secrets: |
+        FONTAWESOME_NPM_AUTH_TOKEN=${{ secrets.FONTAWESOME_NPM_AUTH_TOKEN }}
+```
+
+### Inputs
+
+| Input        | Default         | Purpose                                    |
+| ------------ | --------------- | ------------------------------------------ |
+| `image`      | *(required)*    | Image name without a tag.                  |
+| `context`    | `.`             | Build context.                             |
+| `dockerfile` | `Dockerfile`    | Path relative to the context.              |
+| `target`     | *(empty)*       | Stage to build; empty builds the last one. |
+| `platforms`  | `linux/amd64`   | Target platforms.                          |
+| `build-args` | *(empty)*       | Newline-separated `KEY=value`.             |
+| `runs-on`    | `ubuntu-latest` | Runner label.                              |
+
+### `build-args` versus `build-secrets`
+
+A build arg ends up in the image and in the build log. A credential belongs in
+`build-secrets`, which BuildKit exposes only to the step that mounts it:
+
+```dockerfile
+RUN --mount=type=secret,id=MY_TOKEN,env=MY_TOKEN,required=true npm ci
+```
+
+### Tags published
+
+`latest` on the default branch, the branch name, the short SHA, and on a `v*`
+git tag both `1.2.3` and `1.2`.
+
+### Multi-stage images
+
+A Dockerfile whose stages run as separate services calls this workflow once
+per stage, each as its own job with its own `target` and `image`. The cache is
+scoped per image and target so the builds do not evict each other.
+
+### Deploying
+
+Not part of this workflow. Publishing a tag does not make a running container
+re-pull it, and how a service is rolled out differs per repository, so the
+caller keeps its own deploy job.
+
+## Versioning
+
+Call these workflows on the `v1` tag, never on `@main` — a push to this
+repository would otherwise change CI in every repository at once. Move the
+`v1` tag forward only after the change has run green in one repository.

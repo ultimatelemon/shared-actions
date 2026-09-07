@@ -1,0 +1,113 @@
+name: Docker publish
+
+# Reusable workflow: build one image and push it to GHCR, so a calling
+# repository does not repeat the buildx, login, tagging and cache boilerplate.
+#
+# Deploying is deliberately not part of this. Publishing a tag does not make a
+# running container re-pull it, and how a service is rolled out differs per
+# repository, so the caller keeps its own deploy job.
+#
+# An image with several stages meant to run as separate services calls this
+# once per stage, each with its own `target` and `image`.
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: Image name without a tag, e.g. ghcr.io/ultimatelemon/nova.
+        type: string
+        required: true
+      context:
+        description: Build context.
+        type: string
+        default: .
+      dockerfile:
+        description: Path to the Dockerfile, relative to the context.
+        type: string
+        default: Dockerfile
+      target:
+        description: Dockerfile stage to build. Empty builds the last stage.
+        type: string
+        default: ''
+      platforms:
+        description: >-
+          Target platforms. Everything we run is amd64; adding arm64 only buys
+          QEMU-emulated build time for a platform nothing deploys to.
+        type: string
+        default: linux/amd64
+      build-args:
+        description: >-
+          Newline-separated KEY=value pairs. These end up in the image and in
+          the build log, so never put a credential here - use build-secrets.
+        type: string
+        default: ''
+      runs-on:
+        description: Runner to use.
+        type: string
+        default: ubuntu-latest
+    secrets:
+      build-secrets:
+        description: >-
+          Newline-separated ID=value pairs handed to BuildKit, readable in the
+          Dockerfile as `--mount=type=secret,id=ID`. Unlike a build arg the
+          value never lands in a layer.
+        required: false
+    outputs:
+      image-ref:
+        description: The image reference digest that was pushed.
+        value: ${{ jobs.publish.outputs.digest }}
+
+jobs:
+  publish:
+    runs-on: ${{ inputs.runs-on }}
+
+    permissions:
+      contents: read
+      # Needed to push to ghcr.io/<org>/* with GITHUB_TOKEN. As long as the
+      # image lives under the same organisation as the repository, no PAT.
+      packages: write
+
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: log in to ghcr
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: tags and labels
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ inputs.image }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+
+      - name: build and push
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.context }}/${{ inputs.dockerfile }}
+          target: ${{ inputs.target }}
+          platforms: ${{ inputs.platforms }}
+          build-args: ${{ inputs.build-args }}
+          secrets: ${{ secrets.build-secrets }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Scoped per image so that two targets built from the same Dockerfile
+          # do not evict each other's cache.
+          cache-from: type=gha,scope=${{ inputs.image }}${{ inputs.target }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.image }}${{ inputs.target }}
