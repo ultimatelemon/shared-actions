@@ -1,27 +1,18 @@
 name: Node quality
 
-# Reusable workflow: the whole quality job for a Node project, so a calling
-# repository does not repeat checkout, setup and install for every check.
-#
-# Which checks run is decided by the repository, not by inputs here: every
-# step is `run --if-present`, so a project opts in by having the script in
-# its package.json. Scripts honoured, in order:
-#
-#   lint  ·  format:check  ·  typecheck  ·  test  ·  build
-
 on:
   workflow_call:
     inputs:
       node-version:
-        description: Node.js version to run the checks on.
+        description: Node.js version.
         type: string
         default: '22'
       package-manager:
-        description: Either npm or pnpm.
+        description: npm or pnpm.
         type: string
         default: npm
       working-directory:
-        description: Directory holding package.json, for monorepos.
+        description: Directory holding package.json.
         type: string
         default: '.'
       runs-on:
@@ -30,10 +21,7 @@ on:
         default: ubuntu-latest
     secrets:
       npmrc:
-        description: >-
-          Contents of an .npmrc, for a project that installs from a private
-          registry. Written to the runner's home before install, so it never
-          has to live in the repository.
+        description: Contents of an .npmrc, for installs from a private registry.
         required: false
 
 jobs:
@@ -64,9 +52,6 @@ jobs:
             ${{ inputs.working-directory }}/${{ inputs.package-manager == 'pnpm'
             && 'pnpm-lock.yaml' || 'package-lock.json' }}
 
-      # Written to the home directory rather than the working directory so it
-      # cannot end up in a build context or a diff. The runner is thrown away
-      # after the job.
       - name: npm auth
         env:
           NPMRC: ${{ secrets.npmrc }}
@@ -80,9 +65,6 @@ jobs:
           ${{ inputs.package-manager == 'pnpm'
           && 'pnpm install --frozen-lockfile' || 'npm ci' }}
 
-      # Every check below carries `!cancelled()` so one failure does not hide
-      # the others: a broken lint rule and a broken test show up in the same
-      # run instead of over two pushes. A failed step still fails the job.
       - name: lint
         if: '!cancelled()'
         run: ${{ inputs.package-manager }} run --if-present lint

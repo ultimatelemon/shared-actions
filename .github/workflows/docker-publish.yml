@@ -1,20 +1,10 @@
 name: Docker publish
 
-# Reusable workflow: build one image and push it to GHCR, so a calling
-# repository does not repeat the buildx, login, tagging and cache boilerplate.
-#
-# Deploying is deliberately not part of this. Publishing a tag does not make a
-# running container re-pull it, and how a service is rolled out differs per
-# repository, so the caller keeps its own deploy job.
-#
-# An image with several stages meant to run as separate services calls this
-# once per stage, each with its own `target` and `image`.
-
 on:
   workflow_call:
     inputs:
       image:
-        description: Image name without a tag, e.g. ghcr.io/ultimatelemon/nova.
+        description: Image name without a tag.
         type: string
         required: true
       context:
@@ -26,19 +16,15 @@ on:
         type: string
         default: Dockerfile
       target:
-        description: Dockerfile stage to build. Empty builds the last stage.
+        description: Stage to build. Empty builds the last stage.
         type: string
         default: ''
       platforms:
-        description: >-
-          Target platforms. Everything we run is amd64; adding arm64 only buys
-          QEMU-emulated build time for a platform nothing deploys to.
+        description: Target platforms.
         type: string
         default: linux/amd64
       build-args:
-        description: >-
-          Newline-separated KEY=value pairs. These end up in the image and in
-          the build log, so never put a credential here - use build-secrets.
+        description: Newline-separated KEY=value pairs. Not for credentials.
         type: string
         default: ''
       runs-on:
@@ -47,14 +33,11 @@ on:
         default: ubuntu-latest
     secrets:
       build-secrets:
-        description: >-
-          Newline-separated ID=value pairs handed to BuildKit, readable in the
-          Dockerfile as `--mount=type=secret,id=ID`. Unlike a build arg the
-          value never lands in a layer.
+        description: Newline-separated ID=value pairs handed to BuildKit.
         required: false
     outputs:
       image-ref:
-        description: The image reference digest that was pushed.
+        description: Digest of the pushed image.
         value: ${{ jobs.publish.outputs.digest }}
 
 jobs:
@@ -63,8 +46,6 @@ jobs:
 
     permissions:
       contents: read
-      # Needed to push to ghcr.io/<org>/* with GITHUB_TOKEN. As long as the
-      # image lives under the same organisation as the repository, no PAT.
       packages: write
 
     outputs:
@@ -107,7 +88,5 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Scoped per image so that two targets built from the same Dockerfile
-          # do not evict each other's cache.
           cache-from: type=gha,scope=${{ inputs.image }}${{ inputs.target }}
           cache-to: type=gha,mode=max,scope=${{ inputs.image }}${{ inputs.target }}
