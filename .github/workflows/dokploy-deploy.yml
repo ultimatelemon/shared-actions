@@ -1,0 +1,49 @@
+name: Dokploy deploy
+
+on:
+  workflow_call:
+    inputs:
+      url:
+        description: Public URL of the deployed service.
+        type: string
+        default: ''
+      environment:
+        description: GitHub environment to record the deployment under.
+        type: string
+        default: production
+      runs-on:
+        description: Runner to use.
+        type: string
+        default: ubuntu-latest
+    secrets:
+      webhook-url:
+        description: Dokploy deploy webhook for the application.
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ${{ inputs.runs-on }}
+
+    permissions:
+      contents: read
+
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ inputs.url }}
+
+    steps:
+      - name: trigger Dokploy redeploy
+        env:
+          WEBHOOK_URL: ${{ secrets.webhook-url }}
+        run: |
+          code=$(curl -sS -o /tmp/dokploy-response -w '%{http_code}' -X POST \
+            -H 'Content-Type: application/json' \
+            -H 'X-GitHub-Event: push' \
+            -d "{\"ref\":\"$GITHUB_REF\"}" \
+            "$WEBHOOK_URL")
+          cat /tmp/dokploy-response
+          echo
+          if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+            echo "::error::Dokploy returned HTTP $code"
+            exit 1
+          fi

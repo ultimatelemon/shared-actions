@@ -133,9 +133,47 @@ scoped per image and target so the builds do not evict each other.
 
 ### Deploying
 
-Not part of this workflow. Publishing a tag does not make a running container
-re-pull it, and how a service is rolled out differs per repository, so the
-caller keeps its own deploy job.
+Not part of this workflow: publishing a tag does not make a running container
+re-pull it. Pair it with `dokploy-deploy.yml`.
+
+## `dokploy-deploy.yml`
+
+Tells Dokploy to pull and roll out what `docker-publish.yml` just pushed, and
+records the result under a GitHub environment.
+
+```yaml
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: publish
+    uses: ultimatelemon/shared-actions/.github/workflows/dokploy-deploy.yml@v1
+    with:
+      url: https://yptuinen.nl
+    secrets:
+      webhook-url: ${{ secrets.DOKPLOY_DEPLOY_URL }}
+```
+
+### Inputs
+
+| Input         | Default         | Purpose                             |
+| ------------- | --------------- | ----------------------------------- |
+| `url`         | *(empty)*       | Public URL, shown in Deployments.   |
+| `environment` | `production`    | GitHub environment to record under. |
+| `runs-on`     | `ubuntu-latest` | Runner label.                       |
+
+`webhook-url` is required and comes from the application's Deployments tab in
+Dokploy.
+
+### Why the status check
+
+Dokploy answers a webhook it will not act on with a 3xx, and `curl -f` only
+fails on 4xx and 5xx. A plain `curl -f` therefore reports a successful deploy
+that never happened, so this checks for 2xx explicitly and prints the reply.
+
+### Gating
+
+The workflow itself does not decide when to deploy. Guard the calling job with
+an `if`, so tag builds and manual runs can publish without rolling anything
+out.
 
 ## Versioning
 
