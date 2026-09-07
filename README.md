@@ -163,6 +163,14 @@ records the result under a GitHub environment.
 `webhook-url` is required and comes from the application's Deployments tab in
 Dokploy.
 
+### Deployment titles
+
+Dokploy names a deployment after `head_commit.message` from the webhook body
+and falls back to "NEW COMMIT" when it is absent, so the payload carries the
+first line of the commit message and the SHA. The commit message reaches the
+script through `env`, never through `${{ }}` interpolation, so a crafted
+message cannot run as shell.
+
 ### Why the status check
 
 Dokploy answers a webhook it will not act on with a 3xx, and `curl -f` only

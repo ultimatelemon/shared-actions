@@ -35,11 +35,19 @@ jobs:
       - name: trigger Dokploy redeploy
         env:
           WEBHOOK_URL: ${{ secrets.webhook-url }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
+          message=$(printf '%s\n' "${COMMIT_MESSAGE:-}" | head -n1)
+          [ -n "$message" ] || message="Manual deploy of ${GITHUB_SHA:0:7}"
+          payload=$(jq -n \
+            --arg ref "$GITHUB_REF" \
+            --arg id "$GITHUB_SHA" \
+            --arg message "$message" \
+            '{ref: $ref, head_commit: {id: $id, message: $message}}')
           code=$(curl -sS -o /tmp/dokploy-response -w '%{http_code}' -X POST \
             -H 'Content-Type: application/json' \
             -H 'X-GitHub-Event: push' \
-            -d "{\"ref\":\"$GITHUB_REF\"}" \
+            -d "$payload" \
             "$WEBHOOK_URL")
           cat /tmp/dokploy-response
           echo
