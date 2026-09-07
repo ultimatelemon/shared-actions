@@ -1,0 +1,86 @@
+name: Node quality
+
+# Reusable workflow: the whole quality job for a Node project, so a calling
+# repository does not repeat checkout, setup and install for every check.
+#
+# Which checks run is decided by the repository, not by inputs here: every
+# step is `run --if-present`, so a project opts in by having the script in
+# its package.json. Scripts honoured, in order:
+#
+#   lint  ·  format:check  ·  typecheck  ·  test  ·  build
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: Node.js version to run the checks on.
+        type: string
+        default: '22'
+      package-manager:
+        description: Either npm or pnpm.
+        type: string
+        default: npm
+      working-directory:
+        description: Directory holding package.json, for monorepos.
+        type: string
+        default: '.'
+      runs-on:
+        description: Runner to use.
+        type: string
+        default: ubuntu-latest
+
+jobs:
+  quality:
+    runs-on: ${{ inputs.runs-on }}
+
+    permissions:
+      contents: read
+
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: enable pnpm
+        if: inputs.package-manager == 'pnpm'
+        uses: pnpm/action-setup@v6
+        with:
+          package_json_file: ${{ inputs.working-directory }}/package.json
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: ${{ inputs.package-manager }}
+          cache-dependency-path: >-
+            ${{ inputs.working-directory }}/${{ inputs.package-manager == 'pnpm'
+            && 'pnpm-lock.yaml' || 'package-lock.json' }}
+
+      - name: install
+        run: >-
+          ${{ inputs.package-manager == 'pnpm'
+          && 'pnpm install --frozen-lockfile' || 'npm ci' }}
+
+      # Every check below carries `!cancelled()` so one failure does not hide
+      # the others: a broken lint rule and a broken test show up in the same
+      # run instead of over two pushes. A failed step still fails the job.
+      - name: lint
+        if: '!cancelled()'
+        run: ${{ inputs.package-manager }} run --if-present lint
+
+      - name: format
+        if: '!cancelled()'
+        run: ${{ inputs.package-manager }} run --if-present format:check
+
+      - name: typecheck
+        if: '!cancelled()'
+        run: ${{ inputs.package-manager }} run --if-present typecheck
+
+      - name: test
+        if: '!cancelled()'
+        run: ${{ inputs.package-manager }} run --if-present test
+
+      - name: build
+        if: '!cancelled()'
+        run: ${{ inputs.package-manager }} run --if-present build
