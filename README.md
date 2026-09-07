@@ -40,6 +40,12 @@ in by having the script in its `package.json`. In order:
 A missing script is skipped silently. Adding a check to a repository means
 adding a script, not editing this workflow.
 
+**Next.js projects**: `tsc --noEmit` alone fails on a fresh checkout. Image and
+stylesheet imports get their types from `next-env.d.ts`, which Next generates
+and which belongs in `.gitignore`, so it is absent until something generates
+it. Use `next typegen && tsc --noEmit` — `typegen` writes that file and the
+route types without running a full build.
+
 All checks run even when an earlier one fails (`if: !cancelled()`), so one
 run reports every problem. The job still fails.
 
