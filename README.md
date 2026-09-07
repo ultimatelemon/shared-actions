@@ -53,7 +53,7 @@ run reports every problem. The job still fails.
 
 | Input               | Default         | Purpose                              |
 | ------------------- | --------------- | ------------------------------------ |
-| `node-version`      | `22`            | Node.js version.                     |
+| `node-version`      | `24`            | Node.js version.                     |
 | `package-manager`   | `npm`           | `npm` or `pnpm`.                     |
 | `working-directory` | `.`             | Where `package.json` lives.          |
 | `runs-on`           | `ubuntu-latest` | Runner label.                        |
