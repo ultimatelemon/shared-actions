@@ -65,10 +65,6 @@ jobs:
           ${{ inputs.package-manager == 'pnpm'
           && 'pnpm install --frozen-lockfile' || 'npm ci' }}
 
-      - name: lint
-        if: '!cancelled()'
-        run: ${{ inputs.package-manager }} run --if-present lint
-
       - name: format
         if: '!cancelled()'
         run: ${{ inputs.package-manager }} run --if-present format:check
@@ -76,6 +72,10 @@ jobs:
       - name: typecheck
         if: '!cancelled()'
         run: ${{ inputs.package-manager }} run --if-present typecheck
+
+      - name: lint
+        if: '!cancelled()'
+        run: ${{ inputs.package-manager }} run --if-present lint
 
       - name: test
         if: '!cancelled()'

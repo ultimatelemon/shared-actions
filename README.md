@@ -40,6 +40,10 @@ in by having the script in its `package.json`. In order:
 A missing script is skipped silently. Adding a check to a repository means
 adding a script, not editing this workflow.
 
+`typecheck` runs before `lint` on purpose. In a Next.js project it is the step
+that generates `next-env.d.ts` and the route types, and type-aware ESLint
+rules report everything as `error typed` without them.
+
 **Next.js projects**: `tsc --noEmit` alone fails on a fresh checkout. Image and
 stylesheet imports get their types from `next-env.d.ts`, which Next generates
 and which belongs in `.gitignore`, so it is absent until something generates
