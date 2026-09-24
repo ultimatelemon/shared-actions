@@ -82,6 +82,40 @@ the token comes from a repository secret:
 It is written to the runner's home directory, never the working directory, so
 it cannot reach a build context or a diff.
 
+## `go-quality.yml`
+
+The same idea for a Go module: one job that checks out, sets up Go and runs
+gofmt, `go vet`, `go test ./...`, `go build ./...` and golangci-lint, each
+with `if: !cancelled()` so one run reports every problem.
+
+```yaml
+jobs:
+  bot:
+    uses: ultimatelemon/shared-actions/.github/workflows/go-quality.yml@v1
+    with:
+      working-directory: apps/bot
+```
+
+### Inputs
+
+| Input                   | Default         | Purpose                          |
+| ----------------------- | --------------- | -------------------------------- |
+| `working-directory`     | `.`             | Where `go.mod` lives.            |
+| `go-version`            | `1.25`          | Go version.                      |
+| `golangci-lint-version` | `v2.12.2`       | Release tag, `v` included.       |
+| `runs-on`               | `ubuntu-latest` | Runner label.                    |
+
+The lint step installs golangci-lint from its own install script, so the
+version input is also the version in the URL. A repository with a
+`.golangci.yml` keeps using it; the config is v2 in every repository here.
+
+### No service containers
+
+Unlike `node-quality.yml` this workflow starts no database. `frameline` needs
+Postgres *and* Redis, applies SQL migrations as a superuser before the tests
+and builds two modules in one job, so it keeps its own Go job. A second
+service input would only cover half of that case.
+
 ## `docker-publish.yml`
 
 Builds one image and pushes it to GHCR: buildx, login, tag and label rules and
