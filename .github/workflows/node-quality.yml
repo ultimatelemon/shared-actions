@@ -19,6 +19,22 @@ on:
         description: Runner to use.
         type: string
         default: ubuntu-latest
+      postgres-image:
+        description: Postgres image for the service container. Empty runs no database.
+        type: string
+        default: ''
+      postgres-db:
+        description: Database created in the service container.
+        type: string
+        default: ci
+      postgres-user:
+        description: User created in the service container.
+        type: string
+        default: ci
+      postgres-password:
+        description: Password for that user. A throwaway container, not a secret.
+        type: string
+        default: ci
     secrets:
       npmrc:
         description: Contents of an .npmrc, for installs from a private registry.
@@ -26,61 +42,58 @@ on:
 
 jobs:
   quality:
+    if: inputs.postgres-image == ''
     runs-on: ${{ inputs.runs-on }}
 
     permissions:
       contents: read
 
-    defaults:
-      run:
-        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ultimatelemon/shared-actions/.github/actions/node-checks@v1
+        with:
+          node-version: ${{ inputs.node-version }}
+          package-manager: ${{ inputs.package-manager }}
+          working-directory: ${{ inputs.working-directory }}
+          npmrc: ${{ secrets.npmrc }}
+
+  quality-postgres:
+    if: inputs.postgres-image != ''
+    runs-on: ${{ inputs.runs-on }}
+
+    permissions:
+      contents: read
+
+    services:
+      postgres:
+        image: ${{ inputs.postgres-image }}
+        env:
+          POSTGRES_DB: ${{ inputs.postgres-db }}
+          POSTGRES_USER: ${{ inputs.postgres-user }}
+          POSTGRES_PASSWORD: ${{ inputs.postgres-password }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ${{ inputs.postgres-user }}"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      TEST_DATABASE_URL: >-
+        postgresql://${{ inputs.postgres-user }}:${{ inputs.postgres-password
+        }}@localhost:5432/${{ inputs.postgres-db }}
+      DATABASE_URL: >-
+        postgresql://${{ inputs.postgres-user }}:${{ inputs.postgres-password
+        }}@localhost:5432/${{ inputs.postgres-db }}
 
     steps:
       - uses: actions/checkout@v7
 
-      - name: enable pnpm
-        if: inputs.package-manager == 'pnpm'
-        uses: pnpm/action-setup@v6
-        with:
-          package_json_file: ${{ inputs.working-directory }}/package.json
-
-      - uses: actions/setup-node@v7
+      - uses: ultimatelemon/shared-actions/.github/actions/node-checks@v1
         with:
           node-version: ${{ inputs.node-version }}
-          cache: ${{ inputs.package-manager }}
-          cache-dependency-path: >-
-            ${{ inputs.working-directory }}/${{ inputs.package-manager == 'pnpm'
-            && 'pnpm-lock.yaml' || 'package-lock.json' }}
-
-      - name: npm auth
-        env:
-          NPMRC: ${{ secrets.npmrc }}
-        run: |
-          [ -n "$NPMRC" ] || exit 0
-          printf '%s\n' "$NPMRC" > "$HOME/.npmrc"
-          chmod 600 "$HOME/.npmrc"
-
-      - name: install
-        run: >-
-          ${{ inputs.package-manager == 'pnpm'
-          && 'pnpm install --frozen-lockfile' || 'npm ci' }}
-
-      - name: format
-        if: '!cancelled()'
-        run: ${{ inputs.package-manager }} run --if-present format:check
-
-      - name: typecheck
-        if: '!cancelled()'
-        run: ${{ inputs.package-manager }} run --if-present typecheck
-
-      - name: lint
-        if: '!cancelled()'
-        run: ${{ inputs.package-manager }} run --if-present lint
-
-      - name: test
-        if: '!cancelled()'
-        run: ${{ inputs.package-manager }} run --if-present test
-
-      - name: build
-        if: '!cancelled()'
-        run: ${{ inputs.package-manager }} run --if-present build
+          package-manager: ${{ inputs.package-manager }}
+          working-directory: ${{ inputs.working-directory }}
+          npmrc: ${{ secrets.npmrc }}

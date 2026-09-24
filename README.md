@@ -36,9 +36,15 @@ in by having the script in its `package.json`. In order:
 | `typecheck`    | `tsc --noEmit`         |
 | `test`         | `jest` / `vitest run`  |
 | `build`        | `next build`           |
+| `verify`       | *(anything repo-own)*  |
 
 A missing script is skipped silently. Adding a check to a repository means
 adding a script, not editing this workflow.
+
+`verify` runs last and exists for checks that are real but specific to one
+repository: a migration drift check, an extra bundle step, a generated file
+that must match its source. Put them behind a `verify` script instead of
+keeping a hand-written workflow next to this one.
 
 `typecheck` runs before `lint` on purpose. In a Next.js project it is the step
 that generates `next-env.d.ts` and the route types, and type-aware ESLint
@@ -61,9 +67,54 @@ run reports every problem. The job still fails.
 | `package-manager`   | `npm`           | `npm` or `pnpm`.                     |
 | `working-directory` | `.`             | Where `package.json` lives.          |
 | `runs-on`           | `ubuntu-latest` | Runner label.                        |
+| `postgres-image`    | *(empty)*       | Postgres image; empty runs no database. |
+| `postgres-db`       | `ci`            | Database in the service container.   |
+| `postgres-user`     | `ci`            | User in the service container.       |
+| `postgres-password` | `ci`            | Password for that user.              |
 
 Keep this list short. A repository that needs something genuinely different
 is better off with its own workflow than with another input here.
+
+### Tests against a real Postgres
+
+A repository whose tests need a database passes an image. Nothing else
+changes; leaving `postgres-image` empty runs the job exactly as before.
+
+```yaml
+  quality:
+    uses: ultimatelemon/shared-actions/.github/workflows/node-quality.yml@v1
+    with:
+      working-directory: apps/web
+      postgres-image: postgres:18.6-trixie
+```
+
+Pin the image to an exact version and distro. Another glibc means other
+collations, and a test that asserts on sort order then fails for a reason
+that has nothing to do with the change.
+
+Every step gets both `TEST_DATABASE_URL` and `DATABASE_URL`, pointing at the
+same container. `DATABASE_URL` is there because `drizzle-kit` and `prisma`
+read it by convention, so a drift check in `verify` needs no extra wiring. It
+is safe: the container is created for this job and thrown away with the
+runner, and a runner has no route to a production database. The one thing to
+know is that a `build` which prerenders against a database now finds one
+instead of failing fast.
+
+The defaults `ci` / `ci` / `ci` are the credentials of that throwaway
+container, not a secret. Override them only when the tests hardcode a
+database name.
+
+### Two jobs, one set of steps
+
+A `services:` block cannot be conditional, so the workflow has two jobs,
+`quality` and `quality-postgres`, and an `if` on `postgres-image` picks one.
+Both run the same steps from
+`.github/actions/node-checks`, a composite action in this repository, so the
+step list exists once.
+
+That action is referenced by its full name and tag. Inside a reusable
+workflow a relative `uses: ./...` resolves against the *calling* repository,
+which would look for the action in every repository that calls this workflow.
 
 ### Private registries
 
@@ -81,6 +132,40 @@ the token comes from a repository secret:
 
 It is written to the runner's home directory, never the working directory, so
 it cannot reach a build context or a diff.
+
+## `go-quality.yml`
+
+The same idea for a Go module: one job that checks out, sets up Go and runs
+gofmt, `go vet`, `go test ./...`, `go build ./...` and golangci-lint, each
+with `if: !cancelled()` so one run reports every problem.
+
+```yaml
+jobs:
+  bot:
+    uses: ultimatelemon/shared-actions/.github/workflows/go-quality.yml@v1
+    with:
+      working-directory: apps/bot
+```
+
+### Inputs
+
+| Input                   | Default         | Purpose                          |
+| ----------------------- | --------------- | -------------------------------- |
+| `working-directory`     | `.`             | Where `go.mod` lives.            |
+| `go-version`            | `1.25`          | Go version.                      |
+| `golangci-lint-version` | `v2.12.2`       | Release tag, `v` included.       |
+| `runs-on`               | `ubuntu-latest` | Runner label.                    |
+
+The lint step installs golangci-lint from its own install script, so the
+version input is also the version in the URL. A repository with a
+`.golangci.yml` keeps using it; the config is v2 in every repository here.
+
+### No service containers
+
+Unlike `node-quality.yml` this workflow starts no database. `frameline` needs
+Postgres *and* Redis, applies SQL migrations as a superuser before the tests
+and builds two modules in one job, so it keeps its own Go job. A second
+service input would only cover half of that case.
 
 ## `docker-publish.yml`
 
