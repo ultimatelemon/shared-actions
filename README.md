@@ -82,7 +82,10 @@ is better off with its own workflow than with another input here.
 ### Tests against a real Postgres
 
 A repository whose tests need a database passes an image. Nothing else
-changes; leaving `postgres-image` empty runs the job exactly as before.
+changes about the workflow itself; leaving `postgres-image` empty runs the
+job exactly as before — but see
+[Branch protection and the toggle](#branch-protection-and-the-toggle) below
+for what adding or removing it means for a required status check.
 
 ```yaml
   quality:
@@ -119,6 +122,35 @@ step list exists once.
 That action is referenced by its full name and tag. Inside a reusable
 workflow a relative `uses: ./...` resolves against the *calling* repository,
 which would look for the action in every repository that calls this workflow.
+
+### Branch protection and the toggle
+
+`quality` and `quality-postgres` are mutually exclusive: exactly one of them
+runs on any given workflow call, selected by the `if:` on `postgres-image`,
+and GitHub Actions reports the other one as "skipped". A skipped job is not
+the same as "no check ran" for the purposes of branch protection: GitHub
+treats a skipped *required* status check as passing, not as pending or
+failing.
+
+That matters because the required-check name a caller repo configures is one
+of these two job names, not a name for "the workflow" — GitHub shows it as
+`<caller job id> / quality` or `<caller job id> / quality-postgres`. A
+repository that sets up branch protection requiring the `quality` check
+while it has no `postgres-image` is protected today. The moment someone
+later adds `postgres-image` to that same `uses:` call to pick up database
+tests, that repository silently loses that protection: `quality` becomes
+permanently skipped-therefore-green on every subsequent pull request, while
+the actual checks now run under `quality-postgres` — which enforces nothing
+unless it is *also* added as a required check. Lint, format, type, test and
+build failures can then merge without anyone noticing the required check
+stopped checking anything. (The same applies to `go-quality.yml`, where the
+checks are gofmt, `go vet`, `go test`, `go build` and golangci-lint.)
+
+Require **both** `quality` and `quality-postgres` as required status checks
+in branch protection, not just the one currently in use. With both required,
+toggling `postgres-image` only ever changes which job does the work; it
+never silently changes what is enforced, because the one that does not run
+is skipped-therefore-green while the other actually gates the merge.
 
 ### Private registries
 
@@ -171,8 +203,12 @@ version input is also the version in the URL. A repository with a
 
 ### Tests against a real Postgres
 
-A module whose tests need a database passes an image. Nothing else changes;
-leaving `postgres-image` empty runs the job without a database.
+A module whose tests need a database passes an image. Nothing else changes
+about the workflow itself; leaving `postgres-image` empty runs the job
+without a database — but see
+[Branch protection and the toggle](#branch-protection-and-the-toggle),
+described under `node-quality.yml` above, for what adding or removing it
+means for a required status check.
 
 ```yaml
   bot:
