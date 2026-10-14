@@ -15,6 +15,8 @@ on:
     branches: [main]
   pull_request:
 
+permissions: {}
+
 concurrency:
   group: code-quality-${{ github.ref }}
   cancel-in-progress: true
@@ -22,6 +24,8 @@ concurrency:
 jobs:
   quality:
     uses: ultimatelemon/shared-actions/.github/workflows/node-quality.yml@v1
+    permissions:
+      contents: read
 ```
 
 ### Which checks run
