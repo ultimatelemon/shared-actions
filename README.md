@@ -136,8 +136,8 @@ it cannot reach a build context or a diff.
 ## `go-quality.yml`
 
 The same idea for a Go module: one job that checks out, sets up Go and runs
-gofmt, `go vet`, `go test ./...`, `go build ./...` and golangci-lint, each
-with `if: !cancelled()` so one run reports every problem.
+gofmt, `go vet`, `go test -race ./...`, `go build ./...` and golangci-lint,
+each with `if: !cancelled()` so one run reports every problem.
 
 ```yaml
 jobs:
@@ -149,23 +149,61 @@ jobs:
 
 ### Inputs
 
-| Input                   | Default         | Purpose                          |
-| ----------------------- | --------------- | -------------------------------- |
-| `working-directory`     | `.`             | Where `go.mod` lives.            |
-| `go-version`            | `1.25`          | Go version.                      |
-| `golangci-lint-version` | `v2.12.2`       | Release tag, `v` included.       |
-| `runs-on`               | `ubuntu-latest` | Runner label.                    |
+| Input                   | Default         | Purpose                                 |
+| ----------------------- | --------------- | --------------------------------------- |
+| `working-directory`     | `.`             | Where `go.mod` lives.                   |
+| `go-version`            | `1.25`          | Go version.                             |
+| `golangci-lint-version` | `v2.12.2`       | Release tag, `v` included.              |
+| `runs-on`               | `ubuntu-latest` | Runner label.                           |
+| `postgres-image`        | *(empty)*       | Postgres image; empty runs no database. |
+| `postgres-db`           | `ci`            | Database in the service container.      |
+| `postgres-user`         | `ci`            | User in the service container.          |
+| `postgres-password`     | `ci`            | Password for that user.                 |
+| `pre-test-command`      | *(empty)*       | Command to run before the tests.        |
 
 The lint step installs golangci-lint from its own install script, so the
 version input is also the version in the URL. A repository with a
 `.golangci.yml` keeps using it; the config is v2 in every repository here.
 
-### No service containers
+### Tests against a real Postgres
 
-Unlike `node-quality.yml` this workflow starts no database. `frameline` needs
-Postgres *and* Redis, applies SQL migrations as a superuser before the tests
-and builds two modules in one job, so it keeps its own Go job. A second
-service input would only cover half of that case.
+A module whose tests need a database passes an image. Nothing else changes;
+leaving `postgres-image` empty runs the job without a database.
+
+```yaml
+  bot:
+    uses: ultimatelemon/shared-actions/.github/workflows/go-quality.yml@v1
+    with:
+      working-directory: apps/bot
+      postgres-image: postgres:18.6-trixie
+      pre-test-command: go run ./cmd/migrate
+```
+
+Pin the image to an exact version and distro. Another glibc means other
+collations, and a test that asserts on sort order then fails for a reason
+that has nothing to do with the change.
+
+Every step gets both `TEST_DATABASE_URL` and `DATABASE_URL`, pointing at the
+same container, so a migration tool that reads either one by convention needs
+no extra wiring. The defaults `ci` / `ci` / `ci` are the credentials of that
+throwaway container, not a secret.
+
+`pre-test-command` runs after `go vet` and before the tests, in the working
+directory, and is the place for applying migrations or seeding. The value is
+a command and is deliberately executed, but it reaches the shell through
+`env` rather than `${{ }}` interpolation in the script body, so it cannot
+also rewrite the step around it. Leaving it empty runs nothing, with or
+without a database.
+
+The two jobs behind this work exactly as described under
+[Two jobs, one set of steps](#two-jobs-one-set-of-steps) for
+`node-quality.yml`, sharing `.github/actions/go-checks`.
+
+### Why frameline keeps its own job
+
+`frameline` needs Postgres *and* Redis, applies SQL migrations as a superuser
+before the tests and builds two modules in one job, so it keeps its own Go
+job. A single service input would only cover half of that case.
 
 ## `docker-publish.yml`
 

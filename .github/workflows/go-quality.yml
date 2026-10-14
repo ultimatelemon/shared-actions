@@ -19,17 +19,34 @@ on:
         description: Runner to use.
         type: string
         default: ubuntu-latest
+      postgres-image:
+        description: Postgres image for the service container. Empty runs no database.
+        type: string
+        default: ''
+      postgres-db:
+        description: Database created in the service container.
+        type: string
+        default: ci
+      postgres-user:
+        description: User created in the service container.
+        type: string
+        default: ci
+      postgres-password:
+        description: Password for that user. A throwaway container, not a secret.
+        type: string
+        default: ci
+      pre-test-command:
+        description: Command to run before go test, e.g. applying migrations. Empty runs nothing.
+        type: string
+        default: ''
 
 jobs:
   quality:
+    if: inputs.postgres-image == ''
     runs-on: ${{ inputs.runs-on }}
 
     permissions:
       contents: read
-
-    defaults:
-      run:
-        working-directory: ${{ inputs.working-directory }}
 
     steps:
       - uses: actions/checkout@v7
@@ -39,36 +56,54 @@ jobs:
           go-version: ${{ inputs.go-version }}
           cache-dependency-path: ${{ inputs.working-directory }}/go.sum
 
-      - name: format
-        if: '!cancelled()'
-        run: |
-          unformatted=$(gofmt -l .)
-          if [ -n "$unformatted" ]; then
-            echo "::error::gofmt would change these files:"
-            echo "$unformatted"
-            exit 1
-          fi
+      - uses: ultimatelemon/shared-actions/.github/actions/go-checks@v1
+        with:
+          go-version: ${{ inputs.go-version }}
+          golangci-lint-version: ${{ inputs.golangci-lint-version }}
+          working-directory: ${{ inputs.working-directory }}
+          pre-test-command: ${{ inputs.pre-test-command }}
 
-      - name: vet
-        if: '!cancelled()'
-        run: go vet ./...
+  quality-postgres:
+    if: inputs.postgres-image != ''
+    runs-on: ${{ inputs.runs-on }}
 
-      - name: test
-        if: '!cancelled()'
-        run: go test ./...
+    permissions:
+      contents: read
 
-      - name: build
-        if: '!cancelled()'
-        run: go build ./...
-
-      - name: install golangci-lint
-        if: '!cancelled()'
+    services:
+      postgres:
+        image: ${{ inputs.postgres-image }}
         env:
-          VERSION: ${{ inputs.golangci-lint-version }}
-        run: |
-          curl -sSfL "https://raw.githubusercontent.com/golangci/golangci-lint/$VERSION/install.sh" \
-            | sh -s -- -b "$(go env GOPATH)/bin" "$VERSION"
+          POSTGRES_DB: ${{ inputs.postgres-db }}
+          POSTGRES_USER: ${{ inputs.postgres-user }}
+          POSTGRES_PASSWORD: ${{ inputs.postgres-password }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ${{ inputs.postgres-user }}"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
-      - name: lint
-        if: '!cancelled()'
-        run: golangci-lint run ./...
+    env:
+      TEST_DATABASE_URL: >-
+        postgresql://${{ inputs.postgres-user }}:${{ inputs.postgres-password
+        }}@localhost:5432/${{ inputs.postgres-db }}
+      DATABASE_URL: >-
+        postgresql://${{ inputs.postgres-user }}:${{ inputs.postgres-password
+        }}@localhost:5432/${{ inputs.postgres-db }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ inputs.go-version }}
+          cache-dependency-path: ${{ inputs.working-directory }}/go.sum
+
+      - uses: ultimatelemon/shared-actions/.github/actions/go-checks@v1
+        with:
+          go-version: ${{ inputs.go-version }}
+          golangci-lint-version: ${{ inputs.golangci-lint-version }}
+          working-directory: ${{ inputs.working-directory }}
+          pre-test-command: ${{ inputs.pre-test-command }}
