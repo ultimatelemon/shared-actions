@@ -1,0 +1,75 @@
+name: Go checks
+description: Run the standard Go checks for a module.
+
+inputs:
+  go-version:
+    description: Go version.
+    default: '1.25'
+  golangci-lint-version:
+    description: golangci-lint release tag, including the leading v.
+    default: v2.12.2
+  working-directory:
+    description: Directory holding go.mod.
+    default: '.'
+  pre-test-command:
+    description: Command to run before go test, e.g. applying migrations. Empty runs nothing.
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: format
+      if: '!cancelled()'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        unformatted=$(gofmt -l .)
+        if [ -n "$unformatted" ]; then
+          echo "::error::gofmt would change these files:"
+          echo "$unformatted"
+          exit 1
+        fi
+
+    - name: vet
+      if: '!cancelled()'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: go vet ./...
+
+    - name: pre-test
+      if: '!cancelled()'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PRE_TEST_COMMAND: ${{ inputs.pre-test-command }}
+      run: |
+        [ -n "$PRE_TEST_COMMAND" ] || exit 0
+        eval "$PRE_TEST_COMMAND"
+
+    - name: test
+      if: '!cancelled()'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: go test -race ./...
+
+    - name: build
+      if: '!cancelled()'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: go build ./...
+
+    - name: install golangci-lint
+      if: '!cancelled()'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        VERSION: ${{ inputs.golangci-lint-version }}
+      run: |
+        curl -sSfL "https://raw.githubusercontent.com/golangci/golangci-lint/$VERSION/install.sh" \
+          | sh -s -- -b "$(go env GOPATH)/bin" "$VERSION"
+
+    - name: lint
+      if: '!cancelled()'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: golangci-lint run ./...
