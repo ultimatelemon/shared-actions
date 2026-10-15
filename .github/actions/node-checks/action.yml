@@ -38,8 +38,8 @@ runs:
         NPMRC: ${{ inputs.npmrc }}
       run: |
         [ -n "$NPMRC" ] || exit 0
+        install -m 600 /dev/null "$HOME/.npmrc"
         printf '%s\n' "$NPMRC" > "$HOME/.npmrc"
-        chmod 600 "$HOME/.npmrc"
 
     - name: install
       shell: bash
