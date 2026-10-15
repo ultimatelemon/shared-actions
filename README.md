@@ -330,6 +330,17 @@ records the result under a GitHub environment.
 `webhook-url` is required and comes from the application's Deployments tab in
 Dokploy.
 
+`cf-access-client-id` and `cf-access-client-secret` are optional. When both
+are non-empty, the deploy step sends them as the `CF-Access-Client-Id` and
+`CF-Access-Client-Secret` headers on the webhook call, which is how
+Cloudflare Access service-token authentication is normally presented to a
+protected origin. Adding them is additive and backward compatible: leaving
+either one unset or empty keeps the webhook call exactly as it is today.
+Note that setting them currently has no effect, because no Cloudflare
+Access application has been configured yet for the Dokploy webhook path —
+until one exists, these headers are simply ignored, so do not assume they
+protect anything yet.
+
 ### Deployment titles
 
 Dokploy names a deployment after `head_commit.message` from the webhook body

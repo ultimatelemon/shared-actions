@@ -19,6 +19,12 @@ on:
       webhook-url:
         description: Dokploy deploy webhook for the application.
         required: true
+      cf-access-client-id:
+        description: Cloudflare Access service-token client ID for the deploy webhook (optional).
+        required: false
+      cf-access-client-secret:
+        description: Cloudflare Access service-token client secret for the deploy webhook (optional).
+        required: false
 
 jobs:
   deploy:
@@ -36,6 +42,8 @@ jobs:
         env:
           WEBHOOK_URL: ${{ secrets.webhook-url }}
           COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.cf-access-client-id }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.cf-access-client-secret }}
         run: |
           message=$(printf '%s\n' "${COMMIT_MESSAGE:-}" | head -n1)
           [ -n "$message" ] || message="Manual deploy of ${GITHUB_SHA:0:7}"
@@ -44,9 +52,12 @@ jobs:
             --arg id "$GITHUB_SHA" \
             --arg message "$message" \
             '{ref: $ref, head_commit: {id: $id, message: $message}}')
+          headers=(-H 'Content-Type: application/json' -H 'X-GitHub-Event: push')
+          if [ -n "$CF_ACCESS_CLIENT_ID" ] && [ -n "$CF_ACCESS_CLIENT_SECRET" ]; then
+            headers+=(-H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET")
+          fi
           code=$(curl -sS -o /tmp/dokploy-response -w '%{http_code}' -X POST \
-            -H 'Content-Type: application/json' \
-            -H 'X-GitHub-Event: push' \
+            "${headers[@]}" \
             -d "$payload" \
             "$WEBHOOK_URL")
           cat /tmp/dokploy-response
