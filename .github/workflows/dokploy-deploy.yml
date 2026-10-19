@@ -44,6 +44,8 @@ jobs:
 
     steps:
       - name: trigger Dokploy redeploy
+        # Bash arrays below; a job container's default shell is sh.
+        shell: bash
         env:
           WEBHOOK_URL: ${{ secrets.webhook-url }}
           COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
