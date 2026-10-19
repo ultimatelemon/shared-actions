@@ -100,6 +100,12 @@ Pin the image to an exact version and distro. Another glibc means other
 collations, and a test that asserts on sort order then fails for a reason
 that has nothing to do with the change.
 
+The image must be Postgres 16 or later: the service is initialised with
+`fsync`, `synchronous_commit` and `full_page_writes` off, through `initdb -c`.
+A throwaway database loses nothing by it, and without it `CREATE DATABASE`
+and `DROP DATABASE` take seconds on the cluster. Never copy these settings to
+a real database.
+
 Every step gets both `TEST_DATABASE_URL` and `DATABASE_URL`, pointing at the
 same container. `DATABASE_URL` is there because `drizzle-kit` and `prisma`
 read it by convention, so a drift check in `verify` needs no extra wiring. It
