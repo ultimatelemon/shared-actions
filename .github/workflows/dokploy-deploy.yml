@@ -14,7 +14,11 @@ on:
       runs-on:
         description: Runner to use.
         type: string
-        default: ubuntu-latest
+        default: build-hel-01-k8s
+      container-image:
+        description: Job container. Jobs on build-hel-01-k8s always run in one.
+        type: string
+        default: ghcr.io/ultimatelemon/ci-base:latest
     secrets:
       webhook-url:
         description: Dokploy deploy webhook for the application.
@@ -29,6 +33,7 @@ on:
 jobs:
   deploy:
     runs-on: ${{ inputs.runs-on }}
+    container: ${{ inputs.container-image }}
 
     permissions:
       contents: read

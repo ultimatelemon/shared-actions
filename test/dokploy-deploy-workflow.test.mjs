@@ -480,7 +480,7 @@ describe('dokploy-deploy.yml: edge cases', () => {
     assert.ok(inputsBlock, 'expected workflow_call.inputs to still exist');
     assert.equal(getValue(getBlock(inputsBlock, 'url'), 'default'), '');
     assert.equal(getValue(getBlock(inputsBlock, 'environment'), 'default'), 'production');
-    assert.equal(getValue(getBlock(inputsBlock, 'runs-on'), 'default'), 'ubuntu-latest');
+    assert.equal(getValue(getBlock(inputsBlock, 'runs-on'), 'default'), 'build-hel-01-k8s');
   });
 });
 

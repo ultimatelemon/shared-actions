@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   quality:
-    uses: ultimatelemon/shared-actions/.github/workflows/node-quality.yml@v1
+    uses: ultimatelemon/shared-actions/.github/workflows/node-quality.yml@v2
     permissions:
       contents: read
 ```
@@ -70,7 +70,8 @@ run reports every problem. The job still fails.
 | `node-version`      | `24`            | Node.js version.                     |
 | `package-manager`   | `npm`           | `npm` or `pnpm`.                     |
 | `working-directory` | `.`             | Where `package.json` lives.          |
-| `runs-on`           | `ubuntu-latest` | Runner label.                        |
+| `runs-on`           | `build-hel-01-k8s` | Runner label.                     |
+| `container-image`   | `ci-base:latest` | Job container (see below).         |
 | `postgres-image`    | *(empty)*       | Postgres image; empty runs no database. |
 | `postgres-db`       | `ci`            | Database in the service container.   |
 | `postgres-user`     | `ci`            | User in the service container.       |
@@ -89,7 +90,7 @@ for what adding or removing it means for a required status check.
 
 ```yaml
   quality:
-    uses: ultimatelemon/shared-actions/.github/workflows/node-quality.yml@v1
+    uses: ultimatelemon/shared-actions/.github/workflows/node-quality.yml@v2
     with:
       working-directory: apps/web
       postgres-image: postgres:18.6-trixie
@@ -178,24 +179,25 @@ each with `if: !cancelled()` so one run reports every problem.
 ```yaml
 jobs:
   bot:
-    uses: ultimatelemon/shared-actions/.github/workflows/go-quality.yml@v1
+    uses: ultimatelemon/shared-actions/.github/workflows/go-quality.yml@v2
     with:
       working-directory: apps/bot
 ```
 
 ### Inputs
 
-| Input                   | Default         | Purpose                                 |
-| ----------------------- | --------------- | --------------------------------------- |
-| `working-directory`     | `.`             | Where `go.mod` lives.                   |
-| `go-version`            | `1.25`          | Go version.                             |
-| `golangci-lint-version` | `v2.12.2`       | Release tag, `v` included.              |
-| `runs-on`               | `ubuntu-latest` | Runner label.                           |
-| `postgres-image`        | *(empty)*       | Postgres image; empty runs no database. |
-| `postgres-db`           | `ci`            | Database in the service container.      |
-| `postgres-user`         | `ci`            | User in the service container.          |
-| `postgres-password`     | `ci`            | Password for that user.                 |
-| `pre-test-command`      | *(empty)*       | Command to run before the tests.        |
+| Input                   | Default            | Purpose                                 |
+| ----------------------- | ------------------ | --------------------------------------- |
+| `working-directory`     | `.`                | Where `go.mod` lives.                   |
+| `go-version`            | `1.25`             | Go version.                             |
+| `golangci-lint-version` | `v2.12.2`          | Release tag, `v` included.              |
+| `runs-on`               | `build-hel-01-k8s` | Runner label.                           |
+| `container-image`       | `ci-base:latest`   | Job container (see below).              |
+| `postgres-image`        | *(empty)*          | Postgres image; empty runs no database. |
+| `postgres-db`           | `ci`               | Database in the service container.      |
+| `postgres-user`         | `ci`               | User in the service container.          |
+| `postgres-password`     | `ci`               | Password for that user.                 |
+| `pre-test-command`      | *(empty)*          | Command to run before the tests.        |
 
 The lint step installs golangci-lint from its own install script, so the
 version input is also the version in the URL. A repository with a
@@ -212,7 +214,7 @@ means for a required status check.
 
 ```yaml
   bot:
-    uses: ultimatelemon/shared-actions/.github/workflows/go-quality.yml@v1
+    uses: ultimatelemon/shared-actions/.github/workflows/go-quality.yml@v2
     with:
       working-directory: apps/bot
       postgres-image: postgres:18.6-trixie
@@ -253,7 +255,7 @@ a scoped build cache.
 ```yaml
 jobs:
   publish:
-    uses: ultimatelemon/shared-actions/.github/workflows/docker-publish.yml@v1
+    uses: ultimatelemon/shared-actions/.github/workflows/docker-publish.yml@v2
     permissions:
       contents: read
       packages: write
@@ -276,7 +278,9 @@ jobs:
 | `target`     | *(empty)*       | Stage to build; empty builds the last one. |
 | `platforms`  | `linux/amd64`   | Target platforms.                          |
 | `build-args` | *(empty)*       | Newline-separated `KEY=value`.             |
-| `runs-on`    | `ubuntu-latest` | Runner label.                              |
+| `buildkit-endpoint` | `tcp://buildkitd.buildkit:1234` | BuildKit daemon to build on. |
+| `runs-on`    | `build-hel-01-k8s` | Runner label.                           |
+| `container-image` | `ci-base:latest` | Job container (see below).            |
 
 ### `build-args` versus `build-secrets`
 
@@ -312,7 +316,7 @@ records the result under a GitHub environment.
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: publish
-    uses: ultimatelemon/shared-actions/.github/workflows/dokploy-deploy.yml@v1
+    uses: ultimatelemon/shared-actions/.github/workflows/dokploy-deploy.yml@v2
     with:
       url: https://yptuinen.nl
     secrets:
@@ -325,7 +329,8 @@ records the result under a GitHub environment.
 | ------------- | --------------- | ----------------------------------- |
 | `url`         | *(empty)*       | Public URL, shown in Deployments.   |
 | `environment` | `production`    | GitHub environment to record under. |
-| `runs-on`     | `ubuntu-latest` | Runner label.                       |
+| `runs-on`     | `build-hel-01-k8s` | Runner label.                    |
+| `container-image` | `ci-base:latest` | Job container (see below).     |
 
 `webhook-url` is required and comes from the application's Deployments tab in
 Dokploy.
@@ -361,8 +366,33 @@ The workflow itself does not decide when to deploy. Guard the calling job with
 an `if`, so tag builds and manual runs can publish without rolling anything
 out.
 
+## Runners and the job container
+
+`v2` runs on `build-hel-01-k8s`: GitHub Actions runners on the k3s cluster on
+build-hel-01 (ARC in kubernetes mode, see the infrastructure repository). Only
+private repositories in the organisation can use them. That mode has three
+consequences for everything here:
+
+- Every job runs in a container, `ghcr.io/ultimatelemon/ci-base:latest` by
+  default (git, build tools, `psql`, the docker CLI with buildx). A repository
+  that needs more passes its own image as `container-image`.
+- There is no Docker daemon. `docker-publish.yml` builds on the cluster's
+  shared rootless BuildKit through buildx's remote driver, so `linux/amd64`
+  is the only platform. A step that runs `docker run` or `docker compose`
+  does not work; use `services:` instead.
+- Services run in the job's pod and are reached on `localhost`. Their Docker
+  `options`, health checks included, are ignored, which is why
+  `node-quality.yml` and `go-quality.yml` wait for Postgres with `pg_isready` itself.
+
+Setting `runs-on: ubuntu-latest` still works, inside the same container, except
+for Postgres: on Docker a service is reached by its name, not on `localhost`.
+
 ## Versioning
 
-Call these workflows on the `v1` tag, never on `@main` — a push to this
-repository would otherwise change CI in every repository at once. Move the
-`v1` tag forward only after the change has run green in one repository.
+Call these workflows on a version tag, never on `@main` — a push to this
+repository would otherwise change CI in every repository at once. Move a tag
+forward only after the change has run green in one repository.
+
+- `v2`: the build-hel-01-k8s runners and the ci-base container.
+- `v1`: GitHub-hosted runners, unchanged. Kept until every repository is on
+  `v2`.

@@ -18,7 +18,11 @@ on:
       runs-on:
         description: Runner to use.
         type: string
-        default: ubuntu-latest
+        default: build-hel-01-k8s
+      container-image:
+        description: Job container. Jobs on build-hel-01-k8s always run in one.
+        type: string
+        default: ghcr.io/ultimatelemon/ci-base:latest
       postgres-image:
         description: Postgres image for the service container. Empty runs no database.
         type: string
@@ -44,6 +48,7 @@ jobs:
   quality:
     if: inputs.postgres-image == ''
     runs-on: ${{ inputs.runs-on }}
+    container: ${{ inputs.container-image }}
 
     permissions:
       contents: read
@@ -56,7 +61,7 @@ jobs:
           go-version: ${{ inputs.go-version }}
           cache-dependency-path: ${{ inputs.working-directory }}/go.sum
 
-      - uses: ultimatelemon/shared-actions/.github/actions/go-checks@v1
+      - uses: ultimatelemon/shared-actions/.github/actions/go-checks@v2
         with:
           go-version: ${{ inputs.go-version }}
           golangci-lint-version: ${{ inputs.golangci-lint-version }}
@@ -66,6 +71,7 @@ jobs:
   quality-postgres:
     if: inputs.postgres-image != ''
     runs-on: ${{ inputs.runs-on }}
+    container: ${{ inputs.container-image }}
 
     permissions:
       contents: read
@@ -77,13 +83,6 @@ jobs:
           POSTGRES_DB: ${{ inputs.postgres-db }}
           POSTGRES_USER: ${{ inputs.postgres-user }}
           POSTGRES_PASSWORD: ${{ inputs.postgres-password }}
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U ${{ inputs.postgres-user }}"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
 
     env:
       TEST_DATABASE_URL: >-
@@ -96,12 +95,24 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Kubernetes mode ignores a service's health check, so wait here instead.
+      - name: wait for postgres
+        env:
+          PGUSER: ${{ inputs.postgres-user }}
+        run: |
+          for _ in $(seq 60); do
+            pg_isready -h localhost -q && exit 0
+            sleep 2
+          done
+          echo "::error::Postgres did not become ready"
+          exit 1
+
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ inputs.go-version }}
           cache-dependency-path: ${{ inputs.working-directory }}/go.sum
 
-      - uses: ultimatelemon/shared-actions/.github/actions/go-checks@v1
+      - uses: ultimatelemon/shared-actions/.github/actions/go-checks@v2
         with:
           go-version: ${{ inputs.go-version }}
           golangci-lint-version: ${{ inputs.golangci-lint-version }}
