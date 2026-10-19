@@ -83,6 +83,9 @@ jobs:
           POSTGRES_DB: ${{ inputs.postgres-db }}
           POSTGRES_USER: ${{ inputs.postgres-user }}
           POSTGRES_PASSWORD: ${{ inputs.postgres-password }}
+          # The image trusts 127.0.0.1, and in Kubernetes mode the job reaches the
+          # service there, so any password would work. Check it as on Docker.
+          POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
 
     env:
       TEST_DATABASE_URL: >-
