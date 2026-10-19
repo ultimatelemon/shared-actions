@@ -36,7 +36,11 @@ describe('go-quality.yml workflow_call inputs (AC1)', () => {
     assert.equal(getValue(getBlock(inputsBlock, 'working-directory'), 'default'), '.');
     assert.equal(getValue(getBlock(inputsBlock, 'go-version'), 'default'), '1.25');
     assert.equal(getValue(getBlock(inputsBlock, 'golangci-lint-version'), 'default'), 'v2.12.2');
-    assert.equal(getValue(getBlock(inputsBlock, 'runs-on'), 'default'), 'ubuntu-latest');
+    assert.equal(getValue(getBlock(inputsBlock, 'runs-on'), 'default'), 'build-hel-01-k8s');
+    assert.equal(
+      getValue(getBlock(inputsBlock, 'container-image'), 'default'),
+      'ghcr.io/ultimatelemon/ci-base:latest',
+    );
   });
 
   test('adds postgres-image defaulting to an empty string', () => {
@@ -121,17 +125,17 @@ describe('go-quality.yml: "quality" job (no Postgres) (AC2, AC6, AC8)', () => {
     );
   });
 
-  test('delegates every check to go-checks@v1 by its full remote reference', () => {
+  test('delegates every check to go-checks@v2 by its full remote reference', () => {
     assert.ok(job, 'job missing');
     const steps = splitSteps(getBlock(job, 'steps'));
     const usesList = steps.map((s) => getValue(s, 'uses')).filter(Boolean);
     const goChecksUses = usesList.filter(
-      (u) => u === 'ultimatelemon/shared-actions/.github/actions/go-checks@v1',
+      (u) => u === 'ultimatelemon/shared-actions/.github/actions/go-checks@v2',
     );
     assert.equal(
       goChecksUses.length,
       1,
-      `expected exactly one call to the full "ultimatelemon/shared-actions/.github/actions/go-checks@v1" reference, got: ${JSON.stringify(usesList)}`,
+      `expected exactly one call to the full "ultimatelemon/shared-actions/.github/actions/go-checks@v2" reference, got: ${JSON.stringify(usesList)}`,
     );
     assert.ok(
       !usesList.some((u) => u && u.includes('go-checks') && u.startsWith('./')),
@@ -142,7 +146,7 @@ describe('go-quality.yml: "quality" job (no Postgres) (AC2, AC6, AC8)', () => {
   test('passes working-directory, go-version, golangci-lint-version and pre-test-command through', () => {
     assert.ok(job, 'job missing');
     const steps = splitSteps(getBlock(job, 'steps'));
-    const goChecksStep = steps.find((s) => getValue(s, 'uses') === 'ultimatelemon/shared-actions/.github/actions/go-checks@v1');
+    const goChecksStep = steps.find((s) => getValue(s, 'uses') === 'ultimatelemon/shared-actions/.github/actions/go-checks@v2');
     assert.ok(goChecksStep, 'go-checks step not found');
     const withBlock = getBlock(goChecksStep, 'with');
     assert.ok(withBlock, 'go-checks step has no "with:" inputs');
@@ -197,24 +201,21 @@ describe('go-quality.yml: "quality-postgres" job (AC3, AC4, AC6)', () => {
     assert.match(getValue(env, 'POSTGRES_USER') ?? '', /inputs\.postgres-user/);
     assert.match(getValue(env, 'POSTGRES_PASSWORD') ?? '', /inputs\.postgres-password/);
 
-    const ports = getBlock(postgres, 'ports');
-    assert.ok(ports, 'expected services.postgres.ports');
-    assert.match(ports, /5432:5432/);
-
     // Only one postgres service block should exist in the job.
     const occurrences = (job.match(/^\s*postgres:\s*$/gm) || []).length;
     assert.equal(occurrences, 1, 'expected exactly one "postgres:" service, found duplicates');
   });
 
-  test('health-checks the service with pg_isready, 5s/5s and 10 retries', () => {
+  // Kubernetes mode ignores service options, health checks included.
+  test('waits for the service with pg_isready in a step before go-checks', () => {
     assert.ok(job, 'job missing');
-    const services = getBlock(job, 'services');
-    const postgres = getBlock(services, 'postgres');
-    const options = getValue(postgres, 'options') ?? '';
-    assert.match(options, /pg_isready\s+-U\s+\$\{\{\s*inputs\.postgres-user\s*\}\}/);
-    assert.match(options, /--health-interval\s+5s/);
-    assert.match(options, /--health-timeout\s+5s/);
-    assert.match(options, /--health-retries\s+10/);
+    const steps = splitSteps(getBlock(job, 'steps'));
+    const waitIndex = steps.findIndex((s) => /pg_isready\s+-h\s+localhost/.test(s));
+    const checksIndex = steps.findIndex(
+      (s) => getValue(s, 'uses') === 'ultimatelemon/shared-actions/.github/actions/go-checks@v2'
+    );
+    assert.ok(waitIndex !== -1, 'expected a step that runs pg_isready -h localhost');
+    assert.ok(waitIndex < checksIndex, 'expected the wait step before go-checks');
   });
 
   test('sets both DATABASE_URL and TEST_DATABASE_URL at the job level from the postgres inputs', () => {
@@ -238,12 +239,12 @@ describe('go-quality.yml: "quality-postgres" job (AC3, AC4, AC6)', () => {
     assert.equal((env.match(/^\s*TEST_DATABASE_URL:/gm) || []).length, 1);
   });
 
-  test('also delegates to go-checks@v1 exactly once, by its full remote reference', () => {
+  test('also delegates to go-checks@v2 exactly once, by its full remote reference', () => {
     assert.ok(job, 'job missing');
     const steps = splitSteps(getBlock(job, 'steps'));
     const usesList = steps.map((s) => getValue(s, 'uses')).filter(Boolean);
     const goChecksUses = usesList.filter(
-      (u) => u === 'ultimatelemon/shared-actions/.github/actions/go-checks@v1',
+      (u) => u === 'ultimatelemon/shared-actions/.github/actions/go-checks@v2',
     );
     assert.equal(goChecksUses.length, 1);
   });
@@ -273,7 +274,7 @@ describe('go-quality.yml: edge cases', () => {
     const jobs = ['quality', 'quality-postgres'].map((name) => getJobBlock(workflow, name));
     const withBlocks = jobs.map((job) => {
       const steps = splitSteps(getBlock(job ?? '', 'steps'));
-      const step = steps.find((s) => getValue(s, 'uses') === 'ultimatelemon/shared-actions/.github/actions/go-checks@v1');
+      const step = steps.find((s) => getValue(s, 'uses') === 'ultimatelemon/shared-actions/.github/actions/go-checks@v2');
       assert.ok(step, 'go-checks step missing in one of the jobs');
       return getBlock(step, 'with');
     });

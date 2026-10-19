@@ -71,8 +71,8 @@ describe('README.md "go-quality.yml" section', () => {
     assert.ok(goSection);
     assert.match(
       goSection,
-      /uses:\s*ultimatelemon\/shared-actions\/\.github\/workflows\/go-quality\.yml@v1/,
-      'expected the example to call go-quality.yml@v1',
+      /uses:\s*ultimatelemon\/shared-actions\/\.github\/workflows\/go-quality\.yml@v2/,
+      'expected the example to call go-quality.yml@v2',
     );
   });
 
