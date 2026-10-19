@@ -394,5 +394,6 @@ repository would otherwise change CI in every repository at once. Move a tag
 forward only after the change has run green in one repository.
 
 - `v2`: the build-hel-01-k8s runners and the ci-base container.
-- `v1`: GitHub-hosted runners, unchanged. Kept until every repository is on
-  `v2`.
+- `v1`: GitHub-hosted runners, unchanged. Public repositories stay on `v1`:
+  the build-hel-01-k8s runners only serve private ones, and a public
+  repository's pull requests must never run on our own hardware.
