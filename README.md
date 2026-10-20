@@ -63,6 +63,26 @@ route types without running a full build.
 All checks run even when an earlier one fails (`if: !cancelled()`), so one
 run reports every problem. The job still fails.
 
+### Caches
+
+On `build-hel-01-k8s` these go to the cache server in the cluster, not to
+GitHub, so restoring takes seconds.
+
+- The package manager's download cache, through `setup-node`.
+- `node_modules`, keyed on the OS, the Node version, the package manager and
+  the lockfile. A hit skips the install, and the repository's own
+  `preinstall`, `install`, `postinstall` and `prepare` scripts run instead,
+  for things like `prisma generate` that read files outside the lockfile.
+  There is no partial restore, and workspaces (`pnpm-workspace.yaml` or
+  `workspaces` in `package.json`) always install, since only the root
+  `node_modules` is cached.
+- `.next/cache` when the directory has a `next.config.*`, keyed on the
+  lockfile and the sources and falling back to the newest cache for the same
+  lockfile, so `next build` only rebuilds what changed.
+
+A change that only works after a fresh install, such as a dependency patched
+in place, needs a lockfile change to get past the cache.
+
 ### Inputs
 
 | Input               | Default         | Purpose                              |
