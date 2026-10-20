@@ -24,13 +24,50 @@ runs:
       with:
         package_json_file: ${{ inputs.working-directory }}/package.json
 
-    - uses: actions/setup-node@v7
+    - id: setup-node
+      uses: actions/setup-node@v7
       with:
         node-version: ${{ inputs.node-version }}
         cache: ${{ inputs.package-manager }}
         cache-dependency-path: >-
           ${{ inputs.working-directory }}/${{ inputs.package-manager == 'pnpm'
           && 'pnpm-lock.yaml' || 'package-lock.json' }}
+
+    # Computed once, before install: the post steps of actions/cache re-evaluate
+    # their inputs, and hashFiles would then walk node_modules.
+    - id: keys
+      name: cache keys
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        LOCK: ${{ hashFiles(format('{0}/*-lock.*', inputs.working-directory)) }}
+        SOURCES: >-
+          ${{ hashFiles(format('{0}/**/*.[jt]s', inputs.working-directory), format('{0}/**/*.[jt]sx', inputs.working-directory),
+          format('{0}/**/*.css', inputs.working-directory), format('{0}/**/*.mdx', inputs.working-directory)) }}
+        PREFIX: ${{ runner.os }}-node${{ steps.setup-node.outputs.node-version }}-${{ inputs.package-manager }}
+      run: |
+        echo "next-prefix=nextjs-$PREFIX-$LOCK-" >> "$GITHUB_OUTPUT"
+        echo "next=nextjs-$PREFIX-$LOCK-$SOURCES" >> "$GITHUB_OUTPUT"
+        # Only the root node_modules is cached, so workspaces keep a normal install.
+        if [ -n "$LOCK" ] && [ ! -f pnpm-workspace.yaml ] && ! grep -q '"workspaces"' package.json; then
+          echo "modules=node-modules-$PREFIX-$LOCK" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Next.js build cache
+      if: hashFiles(format('{0}/next.config.*', inputs.working-directory)) != ''
+      uses: actions/cache@v6
+      with:
+        path: ${{ inputs.working-directory }}/.next/cache
+        key: ${{ steps.keys.outputs.next }}
+        restore-keys: ${{ steps.keys.outputs.next-prefix }}
+
+    - id: node-modules
+      name: node_modules cache
+      if: steps.keys.outputs.modules != ''
+      uses: actions/cache@v6
+      with:
+        path: ${{ inputs.working-directory }}/node_modules
+        key: ${{ steps.keys.outputs.modules }}
 
     - name: npm auth
       shell: bash
@@ -42,11 +79,23 @@ runs:
         printf '%s\n' "$NPMRC" > "$HOME/.npmrc"
 
     - name: install
+      if: steps.node-modules.outputs.cache-hit != 'true'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: >-
         ${{ inputs.package-manager == 'pnpm'
         && 'pnpm install --frozen-lockfile' || 'npm ci' }}
+
+    # A restored node_modules skips install, but the root's own install scripts
+    # (prisma generate and the like) may read files outside the lockfile.
+    - name: install scripts
+      if: steps.node-modules.outputs.cache-hit == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        for script in preinstall install postinstall prepare; do
+          ${{ inputs.package-manager }} run --if-present "$script"
+        done
 
     - name: format
       if: '!cancelled()'

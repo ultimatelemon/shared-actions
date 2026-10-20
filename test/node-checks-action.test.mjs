@@ -298,6 +298,64 @@ describe('node-checks/action.yml: install step', () => {
   });
 });
 
+describe('node-checks/action.yml: caches', () => {
+  function findCacheStep(pathRe) {
+    return steps.find((s) => {
+      const withBlock = getBlock(s, 'with') ?? '';
+      return /actions\/cache@/.test(getValue(s, 'uses') ?? '') && pathRe.test(getValue(withBlock, 'path') ?? '');
+    });
+  }
+
+  test('cache keys are computed in a step before install, not inline in the cache steps', () => {
+    requireAction();
+    const keysIdx = steps.findIndex((s) => getValue(s, 'id') === 'keys');
+    assert.notEqual(keysIdx, -1, 'no step with id "keys" found');
+    assert.ok(keysIdx < steps.indexOf(findInstallStep()), 'keys must be computed before install');
+    for (const step of [findCacheStep(/node_modules$/), findCacheStep(/\.next\/cache$/)]) {
+      assert.ok(step, 'missing node_modules or .next/cache cache step');
+      // The post step re-evaluates its inputs; hashFiles there would walk node_modules.
+      assert.doesNotMatch(getBlock(step, 'with'), /hashFiles/, 'cache steps must take their keys from steps.keys');
+    }
+  });
+
+  test('a node_modules hit skips install and runs the root install scripts instead', () => {
+    requireAction();
+    const cache = findCacheStep(/node_modules$/);
+    assert.ok(cache, 'no node_modules cache step found');
+    assert.equal(getValue(cache, 'id'), 'node-modules');
+    assert.equal(
+      normalizeCondition(getValue(findInstallStep(), 'if')),
+      normalizeCondition("steps.node-modules.outputs.cache-hit != 'true'"),
+    );
+    const scripts = steps.find((s) => /for script in preinstall install postinstall prepare/.test(getValue(s, 'run') ?? ''));
+    assert.ok(scripts, 'no step running the install scripts found');
+    assert.equal(
+      normalizeCondition(getValue(scripts, 'if')),
+      normalizeCondition("steps.node-modules.outputs.cache-hit == 'true'"),
+    );
+  });
+
+  test('node_modules is not cached for workspaces', () => {
+    requireAction();
+    const keys = steps.find((s) => getValue(s, 'id') === 'keys');
+    const run = getValue(keys, 'run') ?? '';
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'node-checks-keys-'));
+    const out = path.join(dir, 'out');
+    const env = { LOCK: 'abc', SOURCES: 'def', PREFIX: 'Linux-nodev24-npm', GITHUB_OUTPUT: out };
+    const outputs = (pkg, extra = {}) => {
+      fs.writeFileSync(path.join(dir, 'package.json'), pkg);
+      for (const [f, c] of Object.entries(extra)) fs.writeFileSync(path.join(dir, f), c);
+      fs.writeFileSync(out, '');
+      const result = runBash(`cd '${dir}'\n${run}`, env);
+      assert.equal(result.status, 0, result.stderr);
+      return fs.readFileSync(out, 'utf8');
+    };
+    assert.match(outputs('{"name":"app"}'), /^modules=node-modules-Linux-nodev24-npm-abc$/m);
+    assert.doesNotMatch(outputs('{"workspaces":["packages/*"]}'), /^modules=/m);
+    assert.doesNotMatch(outputs('{"name":"app"}', { 'pnpm-workspace.yaml': 'packages: []\n' }), /^modules=/m);
+  });
+});
+
 describe('node-checks/action.yml: script steps', () => {
   const scriptCases = [
     ['format', 'format:check'],
