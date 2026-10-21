@@ -304,7 +304,7 @@ jobs:
 | `target`     | *(empty)*       | Stage to build; empty builds the last one. |
 | `platforms`  | `linux/amd64`   | Target platforms.                          |
 | `build-args` | *(empty)*       | Newline-separated `KEY=value`.             |
-| `buildkit-endpoint` | `tcp://buildkitd.buildkit:1234` | BuildKit daemon to build on. |
+| `buildkit-endpoint` | `tcp://buildkitd.buildkit:1234` | BuildKit daemon to build on. Empty: build on the runner. |
 | `runs-on`    | `build-hel-01-k8s` | Runner label.                           |
 | `container-image` | `ci-base:latest` | Job container (see below).            |
 
@@ -412,6 +412,19 @@ consequences for everything here:
 
 Setting `runs-on: ubuntu-latest` still works, inside the same container, except
 for Postgres: on Docker a service is reached by its name, not on `localhost`.
+
+### Public repositories
+
+The runner groups do not admit public repositories, so a fork's pull request
+can never run code on the cluster. A public repository runs on GitHub-hosted
+runners without the job container:
+
+```yaml
+with:
+  runs-on: ubuntu-latest
+  container-image: ''
+  buildkit-endpoint: '' # docker-publish.yml only
+```
 
 ## Versioning
 
