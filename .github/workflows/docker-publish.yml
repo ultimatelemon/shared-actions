@@ -106,4 +106,6 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ inputs.image }}${{ inputs.target }}
-          cache-to: type=gha,mode=max,scope=${{ inputs.image }}${{ inputs.target }}
+          # Parallel builds that share layers race for the same blob key, which
+          # the in-cluster cache server refuses; a cache miss beats a failed publish.
+          cache-to: type=gha,mode=max,ignore-error=true,scope=${{ inputs.image }}${{ inputs.target }}
