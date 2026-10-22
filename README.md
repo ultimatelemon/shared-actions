@@ -326,7 +326,10 @@ git tag both `1.2.3` and `1.2`.
 
 A Dockerfile whose stages run as separate services calls this workflow once
 per stage, each as its own job with its own `target` and `image`. The cache is
-scoped per image and target so the builds do not evict each other.
+scoped per image and target so the builds do not evict each other. Layer blobs
+are not scoped, though: parallel builds that share layers race to store the same
+blob, which the in-cluster cache server refuses. The cache export therefore runs
+with `ignore-error=true`; a lost race costs a cache miss, not the publish.
 
 ### Deploying
 
