@@ -4,7 +4,7 @@ description: Install dependencies and run the standard package.json checks.
 inputs:
   node-version:
     description: Node.js version.
-    default: '24'
+    default: '26'
   package-manager:
     description: npm or pnpm.
     default: npm

@@ -2,6 +2,30 @@
 
 Shared CI building blocks for UltimateLemon repositories.
 
+## Repository conventions
+
+Every repository names its workflows the same way, so the Actions tab and the
+status checks read alike everywhere.
+
+| What                    | Single app            | Monorepo, per deployable app      |
+| ----------------------- | --------------------- | --------------------------------- |
+| Checks file             | `code-quality.yml`    | `<app>-code-quality.yml`          |
+| Checks `name:`          | `Code Quality`        | `<App> Code Quality`              |
+| Deploy file             | `deployment.yml`      | `<app>-deployment.yml`            |
+| Deploy `name:`          | `Deployment`          | `<App> Deployment`                |
+| Job ids                 | `quality`, `publish`, `deploy` | same, in each app's files |
+| Deploy webhook secret   | `DOKPLOY_DEPLOY_URL`  | `DOKPLOY_DEPLOY_URL_<APP>`        |
+
+- `code-quality.yml` runs on `pull_request` and `workflow_call`.
+  `deployment.yml` runs on `push` to `main` (with a `paths` filter in a
+  monorepo) and on `workflow_dispatch`, and calls `code-quality.yml` as its
+  `quality` job before `publish` and `deploy`.
+- Other workflows get a full-word, kebab-case file name and a Title Case
+  `name:` (`release.yml` / `Release`, `squeeze-schema.yml` / `Squeeze Schema`).
+  No abbreviations such as `ci.yml`.
+- Node runs on 26 everywhere: the default here, `node:26-alpine` in
+  Dockerfiles and `"engines": { "node": ">=26" }`.
+
 ## `node-quality.yml`
 
 A reusable workflow that owns the entire quality job for a Node project:
@@ -87,7 +111,7 @@ in place, needs a lockfile change to get past the cache.
 
 | Input               | Default         | Purpose                              |
 | ------------------- | --------------- | ------------------------------------ |
-| `node-version`      | `24`            | Node.js version.                     |
+| `node-version`      | `26`            | Node.js version.                     |
 | `package-manager`   | `npm`           | `npm` or `pnpm`.                     |
 | `working-directory` | `.`             | Where `package.json` lives.          |
 | `runs-on`           | `build-hel-01-k8s` | Runner label.                     |

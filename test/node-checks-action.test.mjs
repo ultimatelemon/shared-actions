@@ -102,11 +102,11 @@ describe('node-checks/action.yml inputs', () => {
     );
   });
 
-  test('node-version defaults to \'24\'', () => {
+  test('node-version defaults to \'26\'', () => {
     requireAction();
     const block = getBlock(inputsBlock, 'node-version');
     assert.ok(block, 'missing input "node-version"');
-    assert.equal(getValue(block, 'default'), '24');
+    assert.equal(getValue(block, 'default'), '26');
   });
 
   test('package-manager defaults to npm', () => {
