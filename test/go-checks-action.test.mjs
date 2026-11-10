@@ -63,10 +63,10 @@ function requireAction() {
 }
 
 describe('go-checks/action.yml inputs', () => {
-  test('declares go-version, golangci-lint-version, working-directory and pre-test-command', () => {
+  test('declares go-version, golangci-lint-version, working-directory, pre-test-command, sqlc and sqlc-version', () => {
     requireAction();
     assert.ok(inputsBlock, 'missing inputs: block');
-    for (const name of ['go-version', 'golangci-lint-version', 'working-directory', 'pre-test-command']) {
+    for (const name of ['go-version', 'golangci-lint-version', 'working-directory', 'pre-test-command', 'sqlc', 'sqlc-version']) {
       assert.ok(getBlock(inputsBlock, name), `missing input "${name}"`);
     }
   });
@@ -78,9 +78,10 @@ describe('go-checks/action.yml inputs', () => {
     assert.equal(getValue(block, 'default'), '');
   });
 
-  test('go-version defaults to empty', () => {
+  test('go-version defaults to empty and sqlc to off', () => {
     requireAction();
     assert.equal(getValue(getBlock(inputsBlock, 'go-version'), 'default'), '');
+    assert.equal(getValue(getBlock(inputsBlock, 'sqlc'), 'default'), 'false');
   });
 });
 
@@ -134,6 +135,36 @@ describe('go-checks/action.yml: Go setup (INF-10420 AC1, AC3)', () => {
   test('fails when go.mod has no version', () => {
     requireAction();
     assert.notEqual(resolve('module x').status, 0);
+  });
+});
+
+describe('go-checks/action.yml: sqlc (INF-10420 AC2)', () => {
+  const sqlcSteps = () => steps.filter((s) => /inputs\.sqlc == ''true''/.test(getValue(s, 'if') ?? ''));
+
+  test('installs and runs sqlc only when the input is true, and even after an earlier failure', () => {
+    requireAction();
+    assert.equal(sqlcSteps().length, 2, 'expected an install and a check step gated on inputs.sqlc');
+    for (const step of sqlcSteps()) {
+      assert.match(getValue(step, 'if'), /^!cancelled\(\) && /);
+    }
+  });
+
+  test('installs the pinned sqlc-version and checks with sqlc diff', () => {
+    requireAction();
+    const [install, check] = sqlcSteps();
+    assert.match(getBlock(install, 'env') ?? '', /inputs\.sqlc-version/);
+    assert.match(getValue(install, 'run') ?? '', /sqlc-dev\/sqlc\/releases\/download\/\$VERSION\//);
+    assert.match(getValue(check, 'run') ?? '', /sqlc diff/);
+  });
+
+  test('runs after vet and before the tests', () => {
+    requireAction();
+    const vetIdx = steps.findIndex((s) => /go vet/.test(getValue(s, 'run') ?? ''));
+    const testIdx = steps.findIndex((s) => /go test/.test(getValue(s, 'run') ?? ''));
+    for (const step of sqlcSteps()) {
+      const idx = steps.indexOf(step);
+      assert.ok(vetIdx < idx && idx < testIdx);
+    }
   });
 });
 

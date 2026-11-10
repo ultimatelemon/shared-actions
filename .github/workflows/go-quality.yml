@@ -43,6 +43,14 @@ on:
         description: Command to run before go test, e.g. applying migrations. Empty runs nothing.
         type: string
         default: ''
+      sqlc:
+        description: Check that the code sqlc generates is up to date, with the sqlc config in working-directory.
+        type: boolean
+        default: false
+      sqlc-version:
+        description: sqlc release tag, including the leading v.
+        type: string
+        default: v1.31.1
 
 jobs:
   quality:
@@ -62,6 +70,8 @@ jobs:
           golangci-lint-version: ${{ inputs.golangci-lint-version }}
           working-directory: ${{ inputs.working-directory }}
           pre-test-command: ${{ inputs.pre-test-command }}
+          sqlc: ${{ inputs.sqlc }}
+          sqlc-version: ${{ inputs.sqlc-version }}
 
   quality-postgres:
     if: inputs.postgres-image != ''
@@ -115,3 +125,5 @@ jobs:
           golangci-lint-version: ${{ inputs.golangci-lint-version }}
           working-directory: ${{ inputs.working-directory }}
           pre-test-command: ${{ inputs.pre-test-command }}
+          sqlc: ${{ inputs.sqlc }}
+          sqlc-version: ${{ inputs.sqlc-version }}

@@ -14,6 +14,12 @@ inputs:
   pre-test-command:
     description: Command to run before go test, e.g. applying migrations. Empty runs nothing.
     default: ''
+  sqlc:
+    description: Check that the code sqlc generates is up to date, with the sqlc config in working-directory.
+    default: 'false'
+  sqlc-version:
+    description: sqlc release tag, including the leading v.
+    default: v1.31.1
 
 runs:
   using: composite
@@ -63,6 +69,34 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: go vet ./...
+
+    - name: install sqlc
+      if: '!cancelled() && inputs.sqlc == ''true'''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        VERSION: ${{ inputs.sqlc-version }}
+      run: |
+        case "$(uname -m)" in
+          x86_64) arch=amd64 ;;
+          aarch64 | arm64) arch=arm64 ;;
+          *) echo "::error::no sqlc release for $(uname -m)"; exit 1 ;;
+        esac
+        dir="$RUNNER_TEMP/sqlc-$VERSION"
+        mkdir -p "$dir"
+        curl -sSfL "https://github.com/sqlc-dev/sqlc/releases/download/$VERSION/sqlc_${VERSION#v}_linux_${arch}.tar.gz" \
+          | tar -xz -C "$dir" sqlc
+        echo "$dir" >> "$GITHUB_PATH"
+
+    - name: sqlc
+      if: '!cancelled() && inputs.sqlc == ''true'''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        if ! sqlc diff; then
+          echo "::error::the generated sqlc code is out of date; run sqlc generate and commit the result"
+          exit 1
+        fi
 
     - name: pre-test
       if: '!cancelled()'
