@@ -14,7 +14,7 @@ on:
       golangci-lint-version:
         description: golangci-lint release tag, including the leading v.
         type: string
-        default: v2.12.2
+        default: v2.15.0
       runs-on:
         description: Runner to use.
         type: string

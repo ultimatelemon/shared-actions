@@ -34,7 +34,7 @@ describe('go-quality.yml workflow_call inputs (AC1)', () => {
 
   test('keeps the pre-existing inputs unchanged', () => {
     assert.equal(getValue(getBlock(inputsBlock, 'working-directory'), 'default'), '.');
-    assert.equal(getValue(getBlock(inputsBlock, 'golangci-lint-version'), 'default'), 'v2.12.2');
+    assert.equal(getValue(getBlock(inputsBlock, 'golangci-lint-version'), 'default'), 'v2.15.0');
     assert.equal(getValue(getBlock(inputsBlock, 'runs-on'), 'default'), 'build-hel-01-k8s');
     assert.equal(
       getValue(getBlock(inputsBlock, 'container-image'), 'default'),
