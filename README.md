@@ -222,25 +222,44 @@ it cannot reach a build context or a diff.
 
 ## `go-quality.yml`
 
-The same idea for a Go module: one job that checks out, sets up Go and runs
-gofmt, `go vet`, `go test -race ./...`, `go build ./...` and golangci-lint,
-each with `if: !cancelled()` so one run reports every problem.
+The same idea for a Go module: one job that checks out, sets up Go in the
+version of `go.mod` and runs gofmt, `go vet`, the sqlc check when it is on,
+`go test -race ./...`, `go build ./...` and golangci-lint, each with
+`if: !cancelled()` so one run reports every problem.
 
 ```yaml
+name: Code Quality
+
+on:
+  pull_request:
+  workflow_call:
+
+permissions: {}
+
+concurrency:
+  group: code-quality-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  bot:
+  quality:
     uses: ultimatelemon/shared-actions/.github/workflows/go-quality.yml@v2
+    permissions:
+      contents: read
     with:
-      working-directory: apps/bot
+      sqlc: true
 ```
+
+For a module in a subdirectory, add `working-directory: apps/bot`.
 
 ### Inputs
 
 | Input                   | Default            | Purpose                                 |
 | ----------------------- | ------------------ | --------------------------------------- |
 | `working-directory`     | `.`                | Where `go.mod` lives.                   |
-| `go-version`            | `1.25`             | Go version.                             |
-| `golangci-lint-version` | `v2.12.2`          | Release tag, `v` included.              |
+| `go-version`            | *(empty)*          | Go version; empty reads `go.mod`.       |
+| `golangci-lint-version` | `v2.15.0`          | Release tag, `v` included.              |
+| `sqlc`                  | `false`            | Check the generated sqlc code.          |
+| `sqlc-version`          | `v1.31.1`          | sqlc release tag, `v` included.         |
 | `runs-on`               | `build-hel-01-k8s` | Runner label.                           |
 | `container-image`       | `ci-base:latest`   | Job container (see below).              |
 | `postgres-image`        | *(empty)*          | Postgres image; empty runs no database. |
@@ -252,6 +271,40 @@ jobs:
 The lint step installs golangci-lint from its own install script, so the
 version input is also the version in the URL. A repository with a
 `.golangci.yml` keeps using it; the config is v2 in every repository here.
+
+### Go version
+
+With `go-version` empty, the workflow reads `go.mod` in the working directory
+and takes the minor of its `toolchain` directive, or of its `go` directive
+when there is none: `go 1.25.4` sets up the latest 1.25 patch. Only the minor,
+because pinning CI to the exact patch in `go.mod` would test on a release
+without the latest security fixes, while the builder image does get them.
+Setting `go-version` overrides `go.mod`, for trying a new minor before
+`go.mod` moves.
+
+golangci-lint refuses a module on a newer Go minor than the one it was built
+with: `v2.12.2` is built with Go 1.26 and fails on a Go 1.27 module, `v2.15.0`
+is built with Go 1.27. A repository that pins `golangci-lint-version` raises
+it before it moves `go.mod` to a new minor.
+
+### sqlc
+
+With `sqlc: true`, the job installs the pinned `sqlc-version` and runs
+`sqlc diff` in the working directory, after `go vet` and before the tests. It
+fails when the committed generated code differs from what `sqlc generate`
+would write, which is also how a query that no longer matches the schema
+shows up. The sqlc config (`sqlc.yaml`, `sqlc.yml` or `sqlc.json`) has to sit
+next to `go.mod`. sqlc does not need a database for this: it reads the schema
+from the files the config points at.
+
+### Caches
+
+`setup-go` caches the module cache and the build cache, keyed on the runner
+OS, the exact Go version and `go.sum`. On `build-hel-01-k8s` the cache lives
+on the cache server in the cluster, so a run with an unchanged `go.sum`
+restores both in seconds and reports unchanged packages as `(cached)` in
+`go test`. A hit on that key is not saved again, so the build cache is as old
+as the last change to `go.sum` or the Go patch release, and gets fresh then.
 
 ### Tests against a real Postgres
 
