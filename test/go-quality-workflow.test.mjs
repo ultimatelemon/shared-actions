@@ -15,6 +15,7 @@ import {
   splitSteps,
   stepName,
   normalizeCondition,
+  runBash,
 } from './helpers.mjs';
 
 const WORKFLOW_PATH = '.github/workflows/go-quality.yml';
@@ -26,6 +27,13 @@ const workflow = readRepoFile(WORKFLOW_PATH);
 const onBlock = getBlock(workflow, 'on');
 const workflowCallBlock = onBlock && getBlock(onBlock, 'workflow_call');
 const inputsBlock = workflowCallBlock && getBlock(workflowCallBlock, 'inputs');
+
+function serviceNames(servicesBlock) {
+  return servicesBlock
+    .split(/\r?\n/)
+    .filter((l) => /^ {6}[A-Za-z0-9_-]+:/.test(l))
+    .map((l) => l.trim().split(':')[0]);
+}
 
 describe('go-quality.yml workflow_call inputs (AC1)', () => {
   test('inputs block exists', () => {
@@ -115,9 +123,12 @@ describe('go-quality.yml: "quality" job (no Postgres) (AC2, AC6, AC8)', () => {
     assert.equal(getValue(permissions, 'contents'), 'read');
   });
 
-  test('has no services block (that is what quality-postgres is for)', () => {
+  test('has only the optional RabbitMQ, Redis and S3 services, no Postgres', () => {
     assert.ok(job, 'job missing');
-    assert.equal(getBlock(job, 'services'), null);
+    const services = getBlock(job, 'services');
+    assert.ok(services, 'expected a services: block');
+    assert.equal(getBlock(services, 'postgres'), null);
+    assert.deepEqual(serviceNames(services), ['rabbitmq', 'redis', 's3']);
   });
 
   test('has no DATABASE_URL/TEST_DATABASE_URL in its env', () => {
@@ -313,6 +324,117 @@ describe('go-quality.yml: edge cases', () => {
     });
     for (const key of ['go-version', 'golangci-lint-version', 'working-directory', 'pre-test-command', 'sqlc', 'sqlc-version']) {
       assert.equal(getValue(withBlocks[0], key), getValue(withBlocks[1], key), `"${key}" should be wired identically in both jobs`);
+    }
+  });
+});
+
+describe('go-quality.yml: optional RabbitMQ, Redis and S3 services (INF-10427)', () => {
+  const quality = getJobBlock(workflow, 'quality');
+  const qualityPostgres = getJobBlock(workflow, 'quality-postgres');
+  const SERVICES = { rabbitmq: 'rabbitmq-image', redis: 'redis-image', s3: 's3-image' };
+  const GO_CHECKS = 'ultimatelemon/shared-actions/.github/actions/go-checks@v2';
+
+  for (const input of Object.values(SERVICES)) {
+    test(`${input} is a string input that defaults to empty`, () => {
+      const block = getBlock(inputsBlock, input);
+      assert.ok(block, `missing ${input} input`);
+      assert.equal(getValue(block, 'type'), 'string');
+      assert.equal(getValue(block, 'default'), '');
+    });
+  }
+
+  test('quality defines each service from its image input, so an empty image starts nothing', () => {
+    const services = getBlock(quality, 'services');
+    for (const [name, input] of Object.entries(SERVICES)) {
+      const block = getBlock(services, name);
+      assert.ok(block, `expected services.${name} in quality`);
+      assert.equal(getValue(block, 'image'), `\${{ inputs.${input} }}`);
+    }
+  });
+
+  test('quality-postgres reuses the same service definitions next to postgres', () => {
+    const services = getBlock(qualityPostgres, 'services');
+    assert.deepEqual(serviceNames(services), ['postgres', 'rabbitmq', 'redis', 's3']);
+    const qualityServices = getBlock(quality, 'services');
+    for (const name of Object.keys(SERVICES)) {
+      const anchor = new RegExp(`^ {6}${name}: &(\\S+)\\s*$`, 'm').exec(qualityServices);
+      assert.ok(anchor, `expected services.${name} in quality to carry an anchor`);
+      assert.equal(getValue(services, name), `*${anchor[1]}`);
+    }
+  });
+
+  function waitStep(job) {
+    return splitSteps(getBlock(job, 'steps')).find((s) => stepName(s) === 'wait for services');
+  }
+
+  test('quality waits for the services in one step, guarded on the three images', () => {
+    const step = waitStep(quality);
+    assert.ok(step, 'expected a "wait for services" step in quality');
+    assert.equal(
+      normalizeCondition(getValue(step, 'if')),
+      "inputs.rabbitmq-image != '' || inputs.redis-image != '' || inputs.s3-image != ''",
+    );
+    assert.equal(getValue(step, 'shell'), 'bash');
+    const env = getBlock(step, 'env');
+    assert.equal(getValue(env, 'NETWORK'), '${{ job.container.network }}');
+  });
+
+  test('both jobs run that step between checkout and go-checks', () => {
+    for (const [name, job] of [['quality', quality], ['quality-postgres', qualityPostgres]]) {
+      const steps = splitSteps(getBlock(job, 'steps'));
+      const wait = steps.findIndex((s) => stepName(s) === 'wait for services' || s.trim() === '*wait-for-services');
+      const checks = steps.findIndex((s) => getValue(s, 'uses') === GO_CHECKS);
+      const checkout = steps.findIndex((s) => (getValue(s, 'uses') ?? '').startsWith('actions/checkout@'));
+      assert.ok(wait !== -1, `expected the wait-for-services step in ${name}`);
+      assert.ok(checkout < wait && wait < checks, `expected checkout, wait for services, go-checks in ${name}`);
+    }
+    const anchored = /^ {6}- &wait-for-services\s*$/m.test(getBlock(quality, 'steps'));
+    assert.ok(anchored, 'expected quality to define the step under the &wait-for-services anchor');
+  });
+
+  test('quality-postgres waits for Postgres before the other services', () => {
+    const steps = splitSteps(getBlock(qualityPostgres, 'steps'));
+    const pg = steps.findIndex((s) => /pg_isready/.test(s));
+    const wait = steps.findIndex((s) => s.trim() === '*wait-for-services');
+    assert.ok(pg !== -1 && pg < wait);
+  });
+
+  function runWait(env) {
+    const script = getValue(waitStep(quality), 'run');
+    const result = runBash(`: > "$PWD/env"; export GITHUB_ENV="$PWD/env"\n${script}\necho "--env--"; cat "$GITHUB_ENV"`, env);
+    return { ...result, env: result.stdout.split('--env--\n')[1] ?? '' };
+  }
+
+  test('the script exports nothing when no service is asked for', () => {
+    const result = runWait({ RABBITMQ: 'false', REDIS: 'false', S3: 'false', NETWORK: '' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.env, '');
+  });
+
+  test('the script fails with an error naming a service that never answers', () => {
+    const script = getValue(waitStep(quality), 'run').replace('seq 60', 'seq 1').replace('sleep 2', ':');
+    const result = runBash(`export GITHUB_ENV="$PWD/env"\n${script}`, {
+      RABBITMQ: 'false', REDIS: 'true', S3: 'false', NETWORK: 'docker-network',
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stdout, /::error::Redis did not become ready/);
+  });
+
+  test('the exported names are the ones the README documents', () => {
+    const script = getValue(waitStep(quality), 'run');
+    const exported = [...script.matchAll(/echo "(TEST_[A-Z0-9_]+)=/g)].map((m) => m[1]).sort();
+    assert.deepEqual(exported, [
+      'TEST_RABBITMQ_URL',
+      'TEST_REDIS_URL',
+      'TEST_S3_ACCESS_KEY_ID',
+      'TEST_S3_BUCKET',
+      'TEST_S3_ENDPOINT',
+      'TEST_S3_REGION',
+      'TEST_S3_SECRET_ACCESS_KEY',
+    ]);
+    const readme = readRepoFile('README.md');
+    for (const name of exported) {
+      assert.match(readme, new RegExp('`' + name + '`'), `README.md should document ${name}`);
     }
   });
 });

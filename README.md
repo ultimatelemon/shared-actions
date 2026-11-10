@@ -266,6 +266,9 @@ For a module in a subdirectory, add `working-directory: apps/bot`.
 | `postgres-db`           | `ci`               | Database in the service container.      |
 | `postgres-user`         | `ci`               | User in the service container.          |
 | `postgres-password`     | `ci`               | Password for that user.                 |
+| `rabbitmq-image`        | *(empty)*          | RabbitMQ image; empty runs none.        |
+| `redis-image`           | *(empty)*          | Redis image; empty runs none.           |
+| `s3-image`              | *(empty)*          | S3-compatible image; empty runs none.   |
 | `pre-test-command`      | *(empty)*          | Command to run before the tests.        |
 
 The lint step installs golangci-lint from its own install script, so the
@@ -344,11 +347,73 @@ The two jobs behind this work exactly as described under
 [Two jobs, one set of steps](#two-jobs-one-set-of-steps) for
 `node-quality.yml`, sharing `.github/actions/go-checks`.
 
+### Tests against RabbitMQ, Redis and S3
+
+Testcontainers cannot work here: the job pods have no Docker daemon. Instead,
+each of these services starts as a service container when its image input is
+set, next to Postgres or without it. An empty image starts nothing: the runner
+drops a service whose image is empty before it creates any container, on
+Docker and in Kubernetes mode alike. So the two jobs stay `quality` and
+`quality-postgres`, both carry the same three service definitions, and
+`postgres-image` alone still decides which of the two runs.
+
+```yaml
+  quality:
+    uses: ultimatelemon/shared-actions/.github/workflows/go-quality.yml@v2
+    permissions:
+      contents: read
+    with:
+      postgres-image: postgres:18.6-trixie
+      rabbitmq-image: rabbitmq:4.3.7
+      redis-image: redis:8.10.2-alpine
+      s3-image: rustfs/rustfs:1.0.4
+```
+
+Before the checks, a `wait for services` step waits up to two minutes for
+each service that was asked for, since Kubernetes mode ignores health checks.
+The job container has no client for any of them, so the step speaks the
+protocol itself: the AMQP header for RabbitMQ, `PING` for Redis, and for S3 it
+creates the bucket, which only succeeds once the store accepts requests. It
+then hands the tests these variables; a service that is off sets none of its
+own, so a test can skip when its variable is empty.
+
+| Variable                    | Value                                |
+| --------------------------- | ------------------------------------ |
+| `TEST_RABBITMQ_URL`         | `amqp://ci:ci@localhost:5672/ci`     |
+| `TEST_REDIS_URL`            | `redis://localhost:6379/0`           |
+| `TEST_S3_ENDPOINT`          | `http://localhost:9000`              |
+| `TEST_S3_REGION`            | `us-east-1`                          |
+| `TEST_S3_BUCKET`            | `ci-bucket`, created by the workflow |
+| `TEST_S3_ACCESS_KEY_ID`     | `ci-access-key`                      |
+| `TEST_S3_SECRET_ACCESS_KEY` | `ci-secret-key`                      |
+
+Like the Postgres defaults, these are the credentials of throwaway containers,
+not secrets, and they are fixed rather than inputs.
+
+- **RabbitMQ** gets user `ci` on vhost `ci`. As the image's default user it is
+  an administrator with full rights on that vhost, so the tests can declare
+  exchanges and quorum queues and use publisher confirms. A single node is
+  enough for a quorum queue.
+- **Redis** runs without a password.
+- **S3** needs an image that serves the S3 API on port 9000 with its default
+  command, because a service container cannot be given a command. RustFS does;
+  the MinIO images do not, they need `server /data`. The workflow sets both
+  `RUSTFS_ACCESS_KEY`/`RUSTFS_SECRET_KEY` and
+  `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`, so an image built on either one
+  picks up the credentials. Use path-style addressing (`UsePathStyle: true` in
+  `aws-sdk-go-v2`): a bucket name in the host does not resolve. A test that
+  needs more buckets creates them with the same credentials.
+
+On Docker (`runs-on: ubuntu-latest`) with the job container, the variables
+point at the service names (`rabbitmq`, `redis`, `s3`) instead of `localhost`,
+which is how the self-test in this repository runs them. Postgres does not do
+this yet.
+
 ### Why frameline keeps its own job
 
 `frameline` needs Postgres *and* Redis, applies SQL migrations as a superuser
 before the tests and builds two modules in one job, so it keeps its own Go
-job. A single service input would only cover half of that case.
+job. The Redis input covers its second service now, but not the rest.
 
 ## `docker-publish.yml`
 
