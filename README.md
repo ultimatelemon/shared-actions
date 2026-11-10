@@ -328,7 +328,7 @@ jobs:
 | `target`     | *(empty)*       | Stage to build; empty builds the last one. |
 | `platforms`  | `linux/amd64`   | Target platforms.                          |
 | `build-args` | *(empty)*       | Newline-separated `KEY=value`.             |
-| `buildkit-endpoint` | `tcp://buildkitd.buildkit:1234` | BuildKit daemon to build on. Empty: build on the runner. |
+| `buildkit-endpoint` | `tcp://buildkitd-<owner>.buildkit:1234` | BuildKit daemon to build on, one per organisation. Empty: build on the runner. |
 | `runs-on`    | `build-hel-01-k8s` | Runner label.                           |
 | `container-image` | `ci-base:latest` | Job container (see below).            |
 
@@ -430,8 +430,9 @@ consequences for everything here:
   default (git, build tools, `psql`, the docker CLI with buildx). A repository
   that needs more passes its own image as `container-image`.
 - There is no Docker daemon. `docker-publish.yml` builds on the cluster's
-  shared rootless BuildKit through buildx's remote driver, so `linux/amd64`
-  is the only platform. A step that runs `docker run` or `docker compose`
+  rootless BuildKit for the caller's organisation through buildx's remote
+  driver, so `linux/amd64` is the only platform. Organisations do not share
+  one: GHCR refuses a push that mounts a layer from another organisation. A step that runs `docker run` or `docker compose`
   does not work; use `services:` instead.
 - Services run in the job's pod and are reached on `localhost`. Their Docker
   `options`, health checks included, are ignored, which is why

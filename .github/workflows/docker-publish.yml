@@ -28,9 +28,9 @@ on:
         type: string
         default: ''
       buildkit-endpoint:
-        description: BuildKit daemon to build on. The job pod has no Docker daemon of its own. Empty builds on the runner, for GitHub-hosted runners.
+        description: BuildKit daemon to build on. The job pod has no Docker daemon of its own. The default is the one for the caller's organisation, since GHCR refuses layer mounts across organisations. Empty builds on the runner, for GitHub-hosted runners.
         type: string
-        default: tcp://buildkitd.buildkit:1234
+        default: tcp://buildkitd-${{ github.repository_owner }}.buildkit:1234
       runs-on:
         description: Runner to use.
         type: string
