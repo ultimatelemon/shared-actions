@@ -1,10 +1,10 @@
 name: Go checks
-description: Run the standard Go checks for a module.
+description: Set up Go and run the standard Go checks for a module.
 
 inputs:
   go-version:
-    description: Go version.
-    default: '1.25'
+    description: Go version. Empty uses the minor of the toolchain or go directive in go.mod, at its latest patch.
+    default: ''
   golangci-lint-version:
     description: golangci-lint release tag, including the leading v.
     default: v2.12.2
@@ -18,6 +18,34 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: resolve go version
+      id: go-version
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GO_VERSION: ${{ inputs.go-version }}
+      run: |
+        if [ -n "$GO_VERSION" ]; then
+          echo "version=$GO_VERSION" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        version=$(awk '
+          $1 == "toolchain" { t = substr($2, 3) }
+          $1 == "go" { g = $2 }
+          END { print (t != "" ? t : g) }
+        ' go.mod)
+        if [ -z "$version" ]; then
+          echo "::error::no go or toolchain directive in go.mod; pass go-version"
+          exit 1
+        fi
+        # Only the minor: an exact go.mod patch would pin CI to an old, unpatched release.
+        echo "version=$(echo "$version" | cut -d. -f1,2)" >> "$GITHUB_OUTPUT"
+
+    - uses: actions/setup-go@v7
+      with:
+        go-version: ${{ steps.go-version.outputs.version }}
+        cache-dependency-path: ${{ inputs.working-directory }}/go.sum
+
     - name: format
       if: '!cancelled()'
       shell: bash

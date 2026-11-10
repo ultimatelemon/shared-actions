@@ -34,13 +34,19 @@ describe('go-quality.yml workflow_call inputs (AC1)', () => {
 
   test('keeps the pre-existing inputs unchanged', () => {
     assert.equal(getValue(getBlock(inputsBlock, 'working-directory'), 'default'), '.');
-    assert.equal(getValue(getBlock(inputsBlock, 'go-version'), 'default'), '1.25');
     assert.equal(getValue(getBlock(inputsBlock, 'golangci-lint-version'), 'default'), 'v2.12.2');
     assert.equal(getValue(getBlock(inputsBlock, 'runs-on'), 'default'), 'build-hel-01-k8s');
     assert.equal(
       getValue(getBlock(inputsBlock, 'container-image'), 'default'),
       'ghcr.io/ultimatelemon/ci-base:latest',
     );
+  });
+
+  test('go-version defaults to empty, so the version comes from go.mod', () => {
+    const block = getBlock(inputsBlock, 'go-version');
+    assert.ok(block, 'missing go-version input');
+    assert.equal(getValue(block, 'default'), '');
+    assert.equal(getValue(block, 'type'), 'string');
   });
 
   test('adds postgres-image defaulting to an empty string', () => {
@@ -111,7 +117,7 @@ describe('go-quality.yml: "quality" job (no Postgres) (AC2, AC6, AC8)', () => {
     assert.equal(getBlock(job, 'defaults'), null);
   });
 
-  test('still checks out the repository and sets up Go as job steps', () => {
+  test('checks out the repository and leaves setting up Go to go-checks', () => {
     assert.ok(job, 'job missing');
     const steps = splitSteps(getBlock(job, 'steps'));
     const usesList = steps.map((s) => getValue(s, 'uses')).filter(Boolean);
@@ -120,8 +126,8 @@ describe('go-quality.yml: "quality" job (no Postgres) (AC2, AC6, AC8)', () => {
       'expected actions/checkout to remain a job step',
     );
     assert.ok(
-      usesList.some((u) => u && u.startsWith('actions/setup-go@')),
-      'expected actions/setup-go to remain a job step',
+      !usesList.some((u) => u && u.startsWith('actions/setup-go@')),
+      'setup-go belongs in go-checks, which resolves the version from go.mod',
     );
   });
 
@@ -249,12 +255,24 @@ describe('go-quality.yml: "quality-postgres" job (AC3, AC4, AC6)', () => {
     assert.equal(goChecksUses.length, 1);
   });
 
-  test('still checks out the repository and sets up Go as job steps', () => {
+  test('checks out the repository and leaves setting up Go to go-checks', () => {
     assert.ok(job, 'job missing');
     const steps = splitSteps(getBlock(job, 'steps'));
     const usesList = steps.map((s) => getValue(s, 'uses')).filter(Boolean);
     assert.ok(usesList.some((u) => u && u.startsWith('actions/checkout@')));
-    assert.ok(usesList.some((u) => u && u.startsWith('actions/setup-go@')));
+    assert.ok(!usesList.some((u) => u && u.startsWith('actions/setup-go@')));
+  });
+});
+
+describe('go-quality.yml: job names', () => {
+  // Callers' rulesets require "<job> / quality" and "<job> / quality-postgres".
+  test('has exactly the jobs quality and quality-postgres', () => {
+    const jobsBlock = getBlock(workflow, 'jobs');
+    const names = jobsBlock
+      .split(/\r?\n/)
+      .filter((l) => /^ {2}[A-Za-z0-9_-]+:\s*$/.test(l))
+      .map((l) => l.trim().slice(0, -1));
+    assert.deepEqual(names, ['quality', 'quality-postgres']);
   });
 });
 
