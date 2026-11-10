@@ -1,0 +1,10 @@
+version: "2"
+sql:
+  - engine: postgresql
+    schema: schema.sql
+    queries: query.sql
+    gen:
+      go:
+        # database/sql instead of pgx/v5 keeps the fixture free of module downloads.
+        package: db
+        out: db

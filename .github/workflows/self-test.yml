@@ -23,3 +23,87 @@ jobs:
         with:
           node-version: '26'
       - run: node --test test/*.test.mjs
+
+  go-checks:
+    name: go-checks (${{ matrix.case.name }}${{ matrix.container != '' && ', ci-base' || '' }})
+    runs-on: ubuntu-latest
+    container: ${{ matrix.container }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        container: ['', 'ghcr.io/ultimatelemon/ci-base:latest']
+        case:
+          - name: version from go.mod
+            fixture: go-plain
+            go-version: ''
+            expect-go: go1.25.
+            sqlc: false
+            stale: false
+            expect: success
+          - name: go-version override
+            fixture: go-plain
+            go-version: '1.26'
+            expect-go: go1.26.
+            sqlc: false
+            stale: false
+            expect: success
+          - name: sqlc on Go 1.27
+            fixture: go-sqlc
+            go-version: ''
+            expect-go: go1.27.
+            sqlc: true
+            stale: false
+            expect: success
+          - name: sqlc catches stale code
+            fixture: go-sqlc
+            go-version: ''
+            expect-go: go1.27.
+            sqlc: true
+            stale: true
+            expect: failure
+          - name: sqlc off ignores stale code
+            fixture: go-sqlc
+            go-version: ''
+            expect-go: go1.27.
+            sqlc: false
+            stale: true
+            expect: success
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: make the generated code stale
+        if: matrix.case.stale
+        working-directory: test/fixtures/${{ matrix.case.fixture }}
+        run: |
+          printf '\n-- name: ListAuthors :many\nSELECT id, name FROM authors;\n' >> query.sql
+
+      # Local path on purpose: go-quality.yml pins go-checks@v2, which would test the tag, not this change.
+      - uses: ./.github/actions/go-checks
+        id: checks
+        continue-on-error: ${{ matrix.case.expect == 'failure' }}
+        with:
+          working-directory: test/fixtures/${{ matrix.case.fixture }}
+          go-version: ${{ matrix.case.go-version }}
+          sqlc: ${{ matrix.case.sqlc }}
+
+      - name: check the outcome
+        env:
+          OUTCOME: ${{ steps.checks.outcome }}
+          EXPECTED: ${{ matrix.case.expect }}
+        run: |
+          if [ "$OUTCOME" != "$EXPECTED" ]; then
+            echo "::error::go-checks ended in $OUTCOME, expected $EXPECTED"
+            exit 1
+          fi
+
+      - name: check the go version
+        env:
+          EXPECTED: ${{ matrix.case.expect-go }}
+        run: |
+          actual=$(go env GOVERSION)
+          case "$actual" in
+            "$EXPECTED"*) echo "$actual" ;;
+            *) echo "::error::Go is $actual, expected $EXPECTED*"; exit 1 ;;
+          esac
