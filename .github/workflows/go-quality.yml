@@ -27,6 +27,18 @@ on:
         description: Postgres image for the service container. Empty runs no database.
         type: string
         default: ''
+      rabbitmq-image:
+        description: RabbitMQ image for a service container. Empty runs no RabbitMQ.
+        type: string
+        default: ''
+      redis-image:
+        description: Redis image for a service container. Empty runs no Redis.
+        type: string
+        default: ''
+      s3-image:
+        description: Image of an S3-compatible store that serves on port 9000 without a command, e.g. RustFS. Empty runs none.
+        type: string
+        default: ''
       postgres-db:
         description: Database created in the service container.
         type: string
@@ -61,8 +73,100 @@ jobs:
     permissions:
       contents: read
 
+    services:
+      rabbitmq: &rabbitmq
+        image: ${{ inputs.rabbitmq-image }}
+        env:
+          RABBITMQ_DEFAULT_USER: ci
+          RABBITMQ_DEFAULT_PASS: ci
+          RABBITMQ_DEFAULT_VHOST: ci
+      redis: &redis
+        image: ${{ inputs.redis-image }}
+      s3: &s3
+        image: ${{ inputs.s3-image }}
+        # Each image reads its own pair and ignores the other.
+        env:
+          RUSTFS_ACCESS_KEY: ci-access-key
+          RUSTFS_SECRET_KEY: ci-secret-key
+          MINIO_ROOT_USER: ci-access-key
+          MINIO_ROOT_PASSWORD: ci-secret-key
+
     steps:
       - uses: actions/checkout@v7
+
+      # An empty image starts no service, so this step only waits for the ones asked for.
+      - &wait-for-services
+        name: wait for services
+        if: inputs.rabbitmq-image != '' || inputs.redis-image != '' || inputs.s3-image != ''
+        shell: bash
+        env:
+          RABBITMQ: ${{ inputs.rabbitmq-image != '' }}
+          REDIS: ${{ inputs.redis-image != '' }}
+          S3: ${{ inputs.s3-image != '' }}
+          # Set on Docker, where a job container reaches a service by its name; empty in Kubernetes mode.
+          NETWORK: ${{ job.container.network }}
+        run: |
+          host() { if [ -n "$NETWORK" ]; then echo "$1"; else echo localhost; fi; }
+
+          retry() {
+            local name=$1
+            shift
+            for _ in $(seq 60); do
+              if "$@" 2>/dev/null; then
+                echo "$name is ready"
+                return 0
+              fi
+              sleep 2
+            done
+            echo "::error::$name did not become ready"
+            exit 1
+          }
+
+          # A ready broker answers the AMQP protocol header with a frame of type 1.
+          amqp() (
+            exec 3<>"/dev/tcp/$1/5672"
+            printf 'AMQP\0\0\11\1' >&3
+            [ "$(timeout 5 head -c 1 <&3 | od -An -tx1 | tr -d ' ')" = 01 ]
+          )
+
+          redis() (
+            exec 3<>"/dev/tcp/$1/6379"
+            printf 'PING\r\n' >&3
+            [ "$(timeout 5 head -c 5 <&3)" = +PONG ]
+          )
+
+          # 409 means the bucket exists already.
+          bucket() {
+            local code
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X PUT \
+              --aws-sigv4 aws:amz:us-east-1:s3 --user ci-access-key:ci-secret-key \
+              "http://$1:9000/ci-bucket")
+            [ "$code" = 200 ] || [ "$code" = 409 ]
+          }
+
+          if [ "$RABBITMQ" = true ]; then
+            h=$(host rabbitmq)
+            retry RabbitMQ amqp "$h"
+            echo "TEST_RABBITMQ_URL=amqp://ci:ci@$h:5672/ci" >> "$GITHUB_ENV"
+          fi
+
+          if [ "$REDIS" = true ]; then
+            h=$(host redis)
+            retry Redis redis "$h"
+            echo "TEST_REDIS_URL=redis://$h:6379/0" >> "$GITHUB_ENV"
+          fi
+
+          if [ "$S3" = true ]; then
+            h=$(host s3)
+            retry S3 bucket "$h"
+            {
+              echo "TEST_S3_ENDPOINT=http://$h:9000"
+              echo "TEST_S3_REGION=us-east-1"
+              echo "TEST_S3_BUCKET=ci-bucket"
+              echo "TEST_S3_ACCESS_KEY_ID=ci-access-key"
+              echo "TEST_S3_SECRET_ACCESS_KEY=ci-secret-key"
+            } >> "$GITHUB_ENV"
+          fi
 
       - uses: ultimatelemon/shared-actions/.github/actions/go-checks@v2
         with:
@@ -95,6 +199,9 @@ jobs:
           POSTGRES_INITDB_ARGS: >-
             --auth-host=scram-sha-256
             -c fsync=off -c synchronous_commit=off -c full_page_writes=off
+      rabbitmq: *rabbitmq
+      redis: *redis
+      s3: *s3
 
     env:
       TEST_DATABASE_URL: >-
@@ -118,6 +225,8 @@ jobs:
           done
           echo "::error::Postgres did not become ready"
           exit 1
+
+      - *wait-for-services
 
       - uses: ultimatelemon/shared-actions/.github/actions/go-checks@v2
         with:

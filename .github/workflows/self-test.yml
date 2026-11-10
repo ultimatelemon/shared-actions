@@ -107,3 +107,36 @@ jobs:
             "$EXPECTED"*) echo "$actual" ;;
             *) echo "::error::Go is $actual, expected $EXPECTED*"; exit 1 ;;
           esac
+
+  # Calls the workflow itself; on GitHub-hosted runners the job container reaches services by name.
+  go-quality-services-on:
+    name: go-quality (services on)
+    uses: ./.github/workflows/go-quality.yml
+    permissions:
+      contents: read
+    with:
+      runs-on: ubuntu-latest
+      working-directory: test/fixtures/go-services
+      rabbitmq-image: rabbitmq:4.3.7
+      redis-image: redis:8.10.2-alpine
+      s3-image: rustfs/rustfs:1.0.4
+
+  go-quality-services-off:
+    name: go-quality (services off)
+    uses: ./.github/workflows/go-quality.yml
+    permissions:
+      contents: read
+    with:
+      runs-on: ubuntu-latest
+      working-directory: test/fixtures/go-plain
+      pre-test-command: |
+        if env | grep -E '^TEST_(RABBITMQ|REDIS|S3)_'; then
+          echo "::error::service variables are set without services"
+          exit 1
+        fi
+        for name in rabbitmq redis s3; do
+          if getent hosts "$name"; then
+            echo "::error::a $name service started from an empty image"
+            exit 1
+          fi
+        done
