@@ -63,10 +63,10 @@ function requireAction() {
 }
 
 describe('go-checks/action.yml inputs', () => {
-  test('declares go-version, golangci-lint-version, working-directory and pre-test-command', () => {
+  test('declares go-version, golangci-lint-version, working-directory, pre-test-command, sqlc and sqlc-version', () => {
     requireAction();
     assert.ok(inputsBlock, 'missing inputs: block');
-    for (const name of ['go-version', 'golangci-lint-version', 'working-directory', 'pre-test-command']) {
+    for (const name of ['go-version', 'golangci-lint-version', 'working-directory', 'pre-test-command', 'sqlc', 'sqlc-version']) {
       assert.ok(getBlock(inputsBlock, name), `missing input "${name}"`);
     }
   });
@@ -76,6 +76,95 @@ describe('go-checks/action.yml inputs', () => {
     const block = getBlock(inputsBlock, 'pre-test-command');
     assert.ok(block);
     assert.equal(getValue(block, 'default'), '');
+  });
+
+  test('go-version defaults to empty and sqlc to off', () => {
+    requireAction();
+    assert.equal(getValue(getBlock(inputsBlock, 'go-version'), 'default'), '');
+    assert.equal(getValue(getBlock(inputsBlock, 'sqlc'), 'default'), 'false');
+  });
+});
+
+describe('go-checks/action.yml: Go setup (INF-10420 AC1, AC3)', () => {
+  const resolveStep = () => steps.find((s) => getValue(s, 'id') === 'go-version');
+  const setupGoStep = () => steps.find((s) => (getValue(s, 'uses') ?? '').startsWith('actions/setup-go@'));
+
+  function resolve(goMod, goVersion = '') {
+    const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'go-version-')), 'out');
+    fs.writeFileSync(out, '');
+    const write = goMod === null ? '' : `cat > go.mod <<'GOMOD'\n${goMod}\nGOMOD\n`;
+    const result = runBash(write + getValue(resolveStep(), 'run'), { GO_VERSION: goVersion, GITHUB_OUTPUT: out });
+    return { status: result.status, output: fs.readFileSync(out, 'utf8').trim() };
+  }
+
+  test('resolves the version before setup-go, which runs before every check', () => {
+    requireAction();
+    const resolveIdx = steps.indexOf(resolveStep());
+    const setupIdx = steps.indexOf(setupGoStep());
+    const formatIdx = steps.findIndex((s) => /gofmt/.test(getValue(s, 'run') ?? ''));
+    assert.notEqual(resolveIdx, -1, 'no step with id go-version');
+    assert.notEqual(setupIdx, -1, 'no actions/setup-go step');
+    assert.ok(resolveIdx < setupIdx && setupIdx < formatIdx);
+  });
+
+  test('setup-go takes the resolved version and caches on go.sum', () => {
+    requireAction();
+    const withBlock = getBlock(setupGoStep(), 'with');
+    assert.match(getValue(withBlock, 'go-version') ?? '', /steps\.go-version\.outputs\.version/);
+    assert.match(getValue(withBlock, 'cache-dependency-path') ?? '', /inputs\.working-directory\s*\}\}\/go\.sum$/);
+    assert.notEqual(getValue(withBlock, 'cache'), 'false');
+  });
+
+  test('takes the minor of the go directive', () => {
+    requireAction();
+    assert.deepEqual(resolve('module x\n\ngo 1.25.4'), { status: 0, output: 'version=1.25' });
+    assert.deepEqual(resolve('module x\n\ngo 1.27'), { status: 0, output: 'version=1.27' });
+  });
+
+  test('prefers the toolchain directive', () => {
+    requireAction();
+    assert.deepEqual(resolve('module x\n\ngo 1.26.0\n\ntoolchain go1.27.2'), { status: 0, output: 'version=1.27' });
+  });
+
+  test('an explicit go-version wins over go.mod', () => {
+    requireAction();
+    assert.deepEqual(resolve('module x\n\ngo 1.25.4', '1.26'), { status: 0, output: 'version=1.26' });
+    assert.deepEqual(resolve(null, '1.26.3'), { status: 0, output: 'version=1.26.3' });
+  });
+
+  test('fails when go.mod has no version', () => {
+    requireAction();
+    assert.notEqual(resolve('module x').status, 0);
+  });
+});
+
+describe('go-checks/action.yml: sqlc (INF-10420 AC2)', () => {
+  const sqlcSteps = () => steps.filter((s) => /inputs\.sqlc == ''true''/.test(getValue(s, 'if') ?? ''));
+
+  test('installs and runs sqlc only when the input is true, and even after an earlier failure', () => {
+    requireAction();
+    assert.equal(sqlcSteps().length, 2, 'expected an install and a check step gated on inputs.sqlc');
+    for (const step of sqlcSteps()) {
+      assert.match(getValue(step, 'if'), /^!cancelled\(\) && /);
+    }
+  });
+
+  test('installs the pinned sqlc-version and checks with sqlc diff', () => {
+    requireAction();
+    const [install, check] = sqlcSteps();
+    assert.match(getBlock(install, 'env') ?? '', /inputs\.sqlc-version/);
+    assert.match(getValue(install, 'run') ?? '', /sqlc-dev\/sqlc\/releases\/download\/\$VERSION\//);
+    assert.match(getValue(check, 'run') ?? '', /sqlc diff/);
+  });
+
+  test('runs after vet and before the tests', () => {
+    requireAction();
+    const vetIdx = steps.findIndex((s) => /go vet/.test(getValue(s, 'run') ?? ''));
+    const testIdx = steps.findIndex((s) => /go test/.test(getValue(s, 'run') ?? ''));
+    for (const step of sqlcSteps()) {
+      const idx = steps.indexOf(step);
+      assert.ok(vetIdx < idx && idx < testIdx);
+    }
   });
 });
 

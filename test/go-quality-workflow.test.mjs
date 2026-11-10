@@ -34,13 +34,32 @@ describe('go-quality.yml workflow_call inputs (AC1)', () => {
 
   test('keeps the pre-existing inputs unchanged', () => {
     assert.equal(getValue(getBlock(inputsBlock, 'working-directory'), 'default'), '.');
-    assert.equal(getValue(getBlock(inputsBlock, 'go-version'), 'default'), '1.25');
-    assert.equal(getValue(getBlock(inputsBlock, 'golangci-lint-version'), 'default'), 'v2.12.2');
+    assert.equal(getValue(getBlock(inputsBlock, 'golangci-lint-version'), 'default'), 'v2.15.0');
     assert.equal(getValue(getBlock(inputsBlock, 'runs-on'), 'default'), 'build-hel-01-k8s');
     assert.equal(
       getValue(getBlock(inputsBlock, 'container-image'), 'default'),
       'ghcr.io/ultimatelemon/ci-base:latest',
     );
+  });
+
+  test('go-version defaults to empty, so the version comes from go.mod', () => {
+    const block = getBlock(inputsBlock, 'go-version');
+    assert.ok(block, 'missing go-version input');
+    assert.equal(getValue(block, 'default'), '');
+    assert.equal(getValue(block, 'type'), 'string');
+  });
+
+  test('sqlc is a boolean that defaults to off', () => {
+    const block = getBlock(inputsBlock, 'sqlc');
+    assert.ok(block, 'missing sqlc input');
+    assert.equal(getValue(block, 'type'), 'boolean');
+    assert.equal(getValue(block, 'default'), 'false');
+  });
+
+  test('sqlc-version pins a release tag', () => {
+    const block = getBlock(inputsBlock, 'sqlc-version');
+    assert.ok(block, 'missing sqlc-version input');
+    assert.match(getValue(block, 'default') ?? '', /^v\d+\.\d+\.\d+$/);
   });
 
   test('adds postgres-image defaulting to an empty string', () => {
@@ -111,7 +130,7 @@ describe('go-quality.yml: "quality" job (no Postgres) (AC2, AC6, AC8)', () => {
     assert.equal(getBlock(job, 'defaults'), null);
   });
 
-  test('still checks out the repository and sets up Go as job steps', () => {
+  test('checks out the repository and leaves setting up Go to go-checks', () => {
     assert.ok(job, 'job missing');
     const steps = splitSteps(getBlock(job, 'steps'));
     const usesList = steps.map((s) => getValue(s, 'uses')).filter(Boolean);
@@ -120,8 +139,8 @@ describe('go-quality.yml: "quality" job (no Postgres) (AC2, AC6, AC8)', () => {
       'expected actions/checkout to remain a job step',
     );
     assert.ok(
-      usesList.some((u) => u && u.startsWith('actions/setup-go@')),
-      'expected actions/setup-go to remain a job step',
+      !usesList.some((u) => u && u.startsWith('actions/setup-go@')),
+      'setup-go belongs in go-checks, which resolves the version from go.mod',
     );
   });
 
@@ -143,7 +162,7 @@ describe('go-quality.yml: "quality" job (no Postgres) (AC2, AC6, AC8)', () => {
     );
   });
 
-  test('passes working-directory, go-version, golangci-lint-version and pre-test-command through', () => {
+  test('passes working-directory, go-version, golangci-lint-version, pre-test-command and the sqlc inputs through', () => {
     assert.ok(job, 'job missing');
     const steps = splitSteps(getBlock(job, 'steps'));
     const goChecksStep = steps.find((s) => getValue(s, 'uses') === 'ultimatelemon/shared-actions/.github/actions/go-checks@v2');
@@ -154,6 +173,8 @@ describe('go-quality.yml: "quality" job (no Postgres) (AC2, AC6, AC8)', () => {
     assert.match(getValue(withBlock, 'golangci-lint-version') ?? '', /inputs\.golangci-lint-version/);
     assert.match(getValue(withBlock, 'working-directory') ?? '', /inputs\.working-directory/);
     assert.match(getValue(withBlock, 'pre-test-command') ?? '', /inputs\.pre-test-command/);
+    assert.match(getValue(withBlock, 'sqlc') ?? '', /inputs\.sqlc\b/);
+    assert.match(getValue(withBlock, 'sqlc-version') ?? '', /inputs\.sqlc-version/);
   });
 
   test('does not itself run go test/go vet/gofmt/go build/golangci-lint (moved into the action)', () => {
@@ -249,12 +270,24 @@ describe('go-quality.yml: "quality-postgres" job (AC3, AC4, AC6)', () => {
     assert.equal(goChecksUses.length, 1);
   });
 
-  test('still checks out the repository and sets up Go as job steps', () => {
+  test('checks out the repository and leaves setting up Go to go-checks', () => {
     assert.ok(job, 'job missing');
     const steps = splitSteps(getBlock(job, 'steps'));
     const usesList = steps.map((s) => getValue(s, 'uses')).filter(Boolean);
     assert.ok(usesList.some((u) => u && u.startsWith('actions/checkout@')));
-    assert.ok(usesList.some((u) => u && u.startsWith('actions/setup-go@')));
+    assert.ok(!usesList.some((u) => u && u.startsWith('actions/setup-go@')));
+  });
+});
+
+describe('go-quality.yml: job names', () => {
+  // Callers' rulesets require "<job> / quality" and "<job> / quality-postgres".
+  test('has exactly the jobs quality and quality-postgres', () => {
+    const jobsBlock = getBlock(workflow, 'jobs');
+    const names = jobsBlock
+      .split(/\r?\n/)
+      .filter((l) => /^ {2}[A-Za-z0-9_-]+:\s*$/.test(l))
+      .map((l) => l.trim().slice(0, -1));
+    assert.deepEqual(names, ['quality', 'quality-postgres']);
   });
 });
 
@@ -278,7 +311,7 @@ describe('go-quality.yml: edge cases', () => {
       assert.ok(step, 'go-checks step missing in one of the jobs');
       return getBlock(step, 'with');
     });
-    for (const key of ['go-version', 'golangci-lint-version', 'working-directory', 'pre-test-command']) {
+    for (const key of ['go-version', 'golangci-lint-version', 'working-directory', 'pre-test-command', 'sqlc', 'sqlc-version']) {
       assert.equal(getValue(withBlocks[0], key), getValue(withBlocks[1], key), `"${key}" should be wired identically in both jobs`);
     }
   });

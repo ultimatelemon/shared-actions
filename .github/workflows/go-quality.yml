@@ -8,13 +8,13 @@ on:
         type: string
         default: '.'
       go-version:
-        description: Go version.
+        description: Go version. Empty uses the minor of the toolchain or go directive in go.mod, at its latest patch.
         type: string
-        default: '1.25'
+        default: ''
       golangci-lint-version:
         description: golangci-lint release tag, including the leading v.
         type: string
-        default: v2.12.2
+        default: v2.15.0
       runs-on:
         description: Runner to use.
         type: string
@@ -43,6 +43,14 @@ on:
         description: Command to run before go test, e.g. applying migrations. Empty runs nothing.
         type: string
         default: ''
+      sqlc:
+        description: Check that the code sqlc generates is up to date, with the sqlc config in working-directory.
+        type: boolean
+        default: false
+      sqlc-version:
+        description: sqlc release tag, including the leading v.
+        type: string
+        default: v1.31.1
 
 jobs:
   quality:
@@ -56,17 +64,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ inputs.go-version }}
-          cache-dependency-path: ${{ inputs.working-directory }}/go.sum
-
       - uses: ultimatelemon/shared-actions/.github/actions/go-checks@v2
         with:
           go-version: ${{ inputs.go-version }}
           golangci-lint-version: ${{ inputs.golangci-lint-version }}
           working-directory: ${{ inputs.working-directory }}
           pre-test-command: ${{ inputs.pre-test-command }}
+          sqlc: ${{ inputs.sqlc }}
+          sqlc-version: ${{ inputs.sqlc-version }}
 
   quality-postgres:
     if: inputs.postgres-image != ''
@@ -114,14 +119,11 @@ jobs:
           echo "::error::Postgres did not become ready"
           exit 1
 
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ inputs.go-version }}
-          cache-dependency-path: ${{ inputs.working-directory }}/go.sum
-
       - uses: ultimatelemon/shared-actions/.github/actions/go-checks@v2
         with:
           go-version: ${{ inputs.go-version }}
           golangci-lint-version: ${{ inputs.golangci-lint-version }}
           working-directory: ${{ inputs.working-directory }}
           pre-test-command: ${{ inputs.pre-test-command }}
+          sqlc: ${{ inputs.sqlc }}
+          sqlc-version: ${{ inputs.sqlc-version }}

@@ -1,23 +1,57 @@
 name: Go checks
-description: Run the standard Go checks for a module.
+description: Set up Go and run the standard Go checks for a module.
 
 inputs:
   go-version:
-    description: Go version.
-    default: '1.25'
+    description: Go version. Empty uses the minor of the toolchain or go directive in go.mod, at its latest patch.
+    default: ''
   golangci-lint-version:
     description: golangci-lint release tag, including the leading v.
-    default: v2.12.2
+    default: v2.15.0
   working-directory:
     description: Directory holding go.mod.
     default: '.'
   pre-test-command:
     description: Command to run before go test, e.g. applying migrations. Empty runs nothing.
     default: ''
+  sqlc:
+    description: Check that the code sqlc generates is up to date, with the sqlc config in working-directory.
+    default: 'false'
+  sqlc-version:
+    description: sqlc release tag, including the leading v.
+    default: v1.31.1
 
 runs:
   using: composite
   steps:
+    - name: resolve go version
+      id: go-version
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GO_VERSION: ${{ inputs.go-version }}
+      run: |
+        if [ -n "$GO_VERSION" ]; then
+          echo "version=$GO_VERSION" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        version=$(awk '
+          $1 == "toolchain" { t = substr($2, 3) }
+          $1 == "go" { g = $2 }
+          END { print (t != "" ? t : g) }
+        ' go.mod)
+        if [ -z "$version" ]; then
+          echo "::error::no go or toolchain directive in go.mod; pass go-version"
+          exit 1
+        fi
+        # Only the minor: an exact go.mod patch would pin CI to an old, unpatched release.
+        echo "version=$(echo "$version" | cut -d. -f1,2)" >> "$GITHUB_OUTPUT"
+
+    - uses: actions/setup-go@v7
+      with:
+        go-version: ${{ steps.go-version.outputs.version }}
+        cache-dependency-path: ${{ inputs.working-directory }}/go.sum
+
     - name: format
       if: '!cancelled()'
       shell: bash
@@ -35,6 +69,34 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: go vet ./...
+
+    - name: install sqlc
+      if: '!cancelled() && inputs.sqlc == ''true'''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        VERSION: ${{ inputs.sqlc-version }}
+      run: |
+        case "$(uname -m)" in
+          x86_64) arch=amd64 ;;
+          aarch64 | arm64) arch=arm64 ;;
+          *) echo "::error::no sqlc release for $(uname -m)"; exit 1 ;;
+        esac
+        dir="$RUNNER_TEMP/sqlc-$VERSION"
+        mkdir -p "$dir"
+        curl -sSfL "https://github.com/sqlc-dev/sqlc/releases/download/$VERSION/sqlc_${VERSION#v}_linux_${arch}.tar.gz" \
+          | tar -xz -C "$dir" sqlc
+        echo "$dir" >> "$GITHUB_PATH"
+
+    - name: sqlc
+      if: '!cancelled() && inputs.sqlc == ''true'''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        if ! sqlc diff; then
+          echo "::error::the generated sqlc code is out of date; run sqlc generate and commit the result"
+          exit 1
+        fi
 
     - name: pre-test
       if: '!cancelled()'
