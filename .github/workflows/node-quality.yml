@@ -46,31 +46,13 @@ on:
 
 jobs:
   quality:
-    if: inputs.postgres-image == ''
     runs-on: ${{ inputs.runs-on }}
     container: ${{ inputs.container-image }}
 
     permissions:
       contents: read
 
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: ultimatelemon/shared-actions/.github/actions/node-checks@v2
-        with:
-          node-version: ${{ inputs.node-version }}
-          package-manager: ${{ inputs.package-manager }}
-          working-directory: ${{ inputs.working-directory }}
-          npmrc: ${{ secrets.npmrc }}
-
-  quality-postgres:
-    if: inputs.postgres-image != ''
-    runs-on: ${{ inputs.runs-on }}
-    container: ${{ inputs.container-image }}
-
-    permissions:
-      contents: read
-
+    # An empty image starts no service, so one job serves callers with and without a database.
     services:
       postgres:
         image: ${{ inputs.postgres-image }}
@@ -86,28 +68,38 @@ jobs:
             --auth-host=scram-sha-256
             -c fsync=off -c synchronous_commit=off -c full_page_writes=off
 
-    env:
-      TEST_DATABASE_URL: >-
-        postgresql://${{ inputs.postgres-user }}:${{ inputs.postgres-password
-        }}@localhost:5432/${{ inputs.postgres-db }}
-      DATABASE_URL: >-
-        postgresql://${{ inputs.postgres-user }}:${{ inputs.postgres-password
-        }}@localhost:5432/${{ inputs.postgres-db }}
-
     steps:
       - uses: actions/checkout@v7
 
       # Kubernetes mode ignores a service's health check, so wait here instead.
       - name: wait for postgres
+        if: inputs.postgres-image != ''
+        shell: bash
         env:
           PGUSER: ${{ inputs.postgres-user }}
+          PGPASSWORD: ${{ inputs.postgres-password }}
+          PGDATABASE: ${{ inputs.postgres-db }}
+          # Set on Docker, where a job container reaches a service by its name; empty in Kubernetes mode.
+          NETWORK: ${{ job.container.network }}
         run: |
+          if [ -n "$NETWORK" ]; then host=postgres; else host=localhost; fi
+          ready=false
           for _ in $(seq 60); do
-            pg_isready -h localhost -q && exit 0
+            if pg_isready -h "$host" -q; then
+              ready=true
+              break
+            fi
             sleep 2
           done
-          echo "::error::Postgres did not become ready"
-          exit 1
+          if [ "$ready" != true ]; then
+            echo "::error::Postgres did not become ready"
+            exit 1
+          fi
+          url="postgresql://$PGUSER:$PGPASSWORD@$host:5432/$PGDATABASE"
+          {
+            echo "TEST_DATABASE_URL=$url"
+            echo "DATABASE_URL=$url"
+          } >> "$GITHUB_ENV"
 
       - uses: ultimatelemon/shared-actions/.github/actions/node-checks@v2
         with:

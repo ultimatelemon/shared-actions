@@ -110,19 +110,23 @@ jobs:
 
   # Calls the workflow itself; on GitHub-hosted runners the job container reaches services by name.
   go-quality-services-on:
-    name: go-quality (services on)
+    name: go-quality (all services on)
     uses: ./.github/workflows/go-quality.yml
     permissions:
       contents: read
     with:
       runs-on: ubuntu-latest
       working-directory: test/fixtures/go-services
+      postgres-image: postgres:18.6-trixie
+      pre-test-command: |
+        [ "$DATABASE_URL" = "$TEST_DATABASE_URL" ]
+        psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -c 'CREATE TABLE ci_check (id int); DROP TABLE ci_check;'
       rabbitmq-image: rabbitmq:4.3.7
       redis-image: redis:8.10.2-alpine
       s3-image: rustfs/rustfs:1.0.4
 
   go-quality-services-off:
-    name: go-quality (services off)
+    name: go-quality (all services off)
     uses: ./.github/workflows/go-quality.yml
     permissions:
       contents: read
@@ -130,13 +134,32 @@ jobs:
       runs-on: ubuntu-latest
       working-directory: test/fixtures/go-plain
       pre-test-command: |
-        if env | grep -E '^TEST_(RABBITMQ|REDIS|S3)_'; then
+        if env | grep -E '^TEST_(RABBITMQ|REDIS|S3)_|^(TEST_)?DATABASE_URL='; then
           echo "::error::service variables are set without services"
           exit 1
         fi
-        for name in rabbitmq redis s3; do
+        for name in postgres rabbitmq redis s3; do
           if getent hosts "$name"; then
             echo "::error::a $name service started from an empty image"
             exit 1
           fi
         done
+
+  node-quality-postgres-on:
+    name: node-quality (postgres on)
+    uses: ./.github/workflows/node-quality.yml
+    permissions:
+      contents: read
+    with:
+      runs-on: ubuntu-latest
+      working-directory: test/fixtures/node-postgres
+      postgres-image: postgres:18.6-trixie
+
+  node-quality-postgres-off:
+    name: node-quality (postgres off)
+    uses: ./.github/workflows/node-quality.yml
+    permissions:
+      contents: read
+    with:
+      runs-on: ubuntu-latest
+      working-directory: test/fixtures/node-plain
