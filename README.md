@@ -127,10 +127,8 @@ is better off with its own workflow than with another input here.
 ### Tests against a real Postgres
 
 A repository whose tests need a database passes an image. Nothing else
-changes about the workflow itself; leaving `postgres-image` empty runs the
-job exactly as before — but see
-[Branch protection and the toggle](#branch-protection-and-the-toggle) below
-for what adding or removing it means for a required status check.
+changes: the job and its check stay `quality`, with or without a database (see
+[Branch protection](#branch-protection)).
 
 ```yaml
   quality:
@@ -150,8 +148,9 @@ A throwaway database loses nothing by it, and without it `CREATE DATABASE`
 and `DROP DATABASE` take seconds on the cluster. Never copy these settings to
 a real database.
 
-Every step gets both `TEST_DATABASE_URL` and `DATABASE_URL`, pointing at the
-same container. `DATABASE_URL` is there because `drizzle-kit` and `prisma`
+Once Postgres answers, every later step gets both `TEST_DATABASE_URL` and
+`DATABASE_URL`, pointing at the same container. Without `postgres-image`
+neither is set. `DATABASE_URL` is there because `drizzle-kit` and `prisma`
 read it by convention, so a drift check in `verify` needs no extra wiring. It
 is safe: the container is created for this job and thrown away with the
 runner, and a runner has no route to a production database. The one thing to
@@ -162,46 +161,32 @@ The defaults `ci` / `ci` / `ci` are the credentials of that throwaway
 container, not a secret. Override them only when the tests hardcode a
 database name.
 
-### Two jobs, one set of steps
+### One job, one set of steps
 
-A `services:` block cannot be conditional, so the workflow has two jobs,
-`quality` and `quality-postgres`, and an `if` on `postgres-image` picks one.
-Both run the same steps from
-`.github/actions/node-checks`, a composite action in this repository, so the
-step list exists once.
+The workflow has a single job, `quality`. Its `postgres` service takes its
+image from `postgres-image`, and a service with an empty image is never
+started: the runner logs that it "will not be started because the container
+definition has an empty image" and goes on. The `wait for postgres` step only
+runs when an image is set, and it is also the step that exports the database
+URLs, so a repository without a database gets none.
 
-That action is referenced by its full name and tag. Inside a reusable
-workflow a relative `uses: ./...` resolves against the *calling* repository,
-which would look for the action in every repository that calls this workflow.
+The steps live in `.github/actions/node-checks`, a composite action in this
+repository, referenced by its full name and tag. Inside a reusable workflow a
+relative `uses: ./...` resolves against the *calling* repository, which would
+look for the action in every repository that calls this workflow.
 
-### Branch protection and the toggle
+### Branch protection
 
-`quality` and `quality-postgres` are mutually exclusive: exactly one of them
-runs on any given workflow call, selected by the `if:` on `postgres-image`,
-and GitHub Actions reports the other one as "skipped". A skipped job is not
-the same as "no check ran" for the purposes of branch protection: GitHub
-treats a skipped *required* status check as passing, not as pending or
-failing.
+Require one status check: `<caller job id> / quality`, which is
+`quality / quality` for a caller whose job is called `quality`. Adding or
+removing `postgres-image` later does not change it, so the required check
+always runs the checks. (The same holds for `go-quality.yml`.)
 
-That matters because the required-check name a caller repo configures is one
-of these two job names, not a name for "the workflow" — GitHub shows it as
-`<caller job id> / quality` or `<caller job id> / quality-postgres`. A
-repository that sets up branch protection requiring the `quality` check
-while it has no `postgres-image` is protected today. The moment someone
-later adds `postgres-image` to that same `uses:` call to pick up database
-tests, that repository silently loses that protection: `quality` becomes
-permanently skipped-therefore-green on every subsequent pull request, while
-the actual checks now run under `quality-postgres` — which enforces nothing
-unless it is *also* added as a required check. Lint, format, type, test and
-build failures can then merge without anyone noticing the required check
-stopped checking anything. (The same applies to `go-quality.yml`, where the
-checks are gofmt, `go vet`, `go test`, `go build` and golangci-lint.)
-
-Require **both** `quality` and `quality-postgres` as required status checks
-in branch protection, not just the one currently in use. With both required,
-toggling `postgres-image` only ever changes which job does the work; it
-never silently changes what is enforced, because the one that does not run
-is skipped-therefore-green while the other actually gates the merge.
+Until `v2` moved to the single job, the database ran in a second job,
+`quality-postgres`, and every pull request showed one of the two as skipped.
+Drop `quality-postgres` from a ruleset once the repository calls a version
+with one job; a required check that never reports again blocks every pull
+request.
 
 ### Private registries
 
@@ -311,12 +296,9 @@ as the last change to `go.sum` or the Go patch release, and gets fresh then.
 
 ### Tests against a real Postgres
 
-A module whose tests need a database passes an image. Nothing else changes
-about the workflow itself; leaving `postgres-image` empty runs the job
-without a database — but see
-[Branch protection and the toggle](#branch-protection-and-the-toggle),
-described under `node-quality.yml` above, for what adding or removing it
-means for a required status check.
+A module whose tests need a database passes an image. Nothing else changes:
+the job and its check stay `quality`, with or without a database (see
+[Branch protection](#branch-protection) under `node-quality.yml`).
 
 ```yaml
   bot:
@@ -331,8 +313,8 @@ Pin the image to an exact version and distro. Another glibc means other
 collations, and a test that asserts on sort order then fails for a reason
 that has nothing to do with the change.
 
-Every step gets both `TEST_DATABASE_URL` and `DATABASE_URL`, pointing at the
-same container, so a migration tool that reads either one by convention needs
+Once Postgres answers, every later step gets both `TEST_DATABASE_URL` and
+`DATABASE_URL`, pointing at the same container, so a migration tool that reads either one by convention needs
 no extra wiring. The defaults `ci` / `ci` / `ci` are the credentials of that
 throwaway container, not a secret.
 
@@ -343,9 +325,9 @@ a command and is deliberately executed, but it reaches the shell through
 also rewrite the step around it. Leaving it empty runs nothing, with or
 without a database.
 
-The two jobs behind this work exactly as described under
-[Two jobs, one set of steps](#two-jobs-one-set-of-steps) for
-`node-quality.yml`, sharing `.github/actions/go-checks`.
+The job works as described under
+[One job, one set of steps](#one-job-one-set-of-steps) for `node-quality.yml`,
+with its steps in `.github/actions/go-checks`.
 
 ### Tests against RabbitMQ, Redis and S3
 
@@ -353,9 +335,8 @@ Testcontainers cannot work here: the job pods have no Docker daemon. Instead,
 each of these services starts as a service container when its image input is
 set, next to Postgres or without it. An empty image starts nothing: the runner
 drops a service whose image is empty before it creates any container, on
-Docker and in Kubernetes mode alike. So the two jobs stay `quality` and
-`quality-postgres`, both carry the same three service definitions, and
-`postgres-image` alone still decides which of the two runs.
+Docker and in Kubernetes mode alike. So every combination runs in the same
+`quality` job.
 
 ```yaml
   quality:
@@ -405,9 +386,8 @@ not secrets, and they are fixed rather than inputs.
   needs more buckets creates them with the same credentials.
 
 On Docker (`runs-on: ubuntu-latest`) with the job container, the variables
-point at the service names (`rabbitmq`, `redis`, `s3`) instead of `localhost`,
-which is how the self-test in this repository runs them. Postgres does not do
-this yet.
+point at the service names (`postgres`, `rabbitmq`, `redis`, `s3`) instead of
+`localhost`, which is how the self-test in this repository runs them.
 
 ### Why frameline keeps its own job
 
@@ -556,8 +536,10 @@ consequences for everything here:
   `options`, health checks included, are ignored, which is why
   `node-quality.yml` and `go-quality.yml` wait for Postgres with `pg_isready` itself.
 
-Setting `runs-on: ubuntu-latest` still works, inside the same container, except
-for Postgres: on Docker a service is reached by its name, not on `localhost`.
+Setting `runs-on: ubuntu-latest` still works, inside the same container. On
+Docker a service is reached by its name instead of on `localhost`, and the
+exported URLs follow that. Without the job container (`container-image: ''`)
+a service is not reachable at all, since none publishes a port.
 
 ### Public repositories
 
