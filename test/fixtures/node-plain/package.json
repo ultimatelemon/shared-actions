@@ -1,0 +1,7 @@
+{
+  "name": "node-plain-fixture",
+  "private": true,
+  "scripts": {
+    "test": "sh check-no-database.sh"
+  }
+}

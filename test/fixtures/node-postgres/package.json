@@ -1,0 +1,7 @@
+{
+  "name": "node-postgres-fixture",
+  "private": true,
+  "scripts": {
+    "test": "sh check-database.sh"
+  }
+}
